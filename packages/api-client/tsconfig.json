@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // DOM is listed for its TYPES only, not because a browser exists. api.ts is shared verbatim
+    // with the web app and is written against fetch / FormData / Blob / XMLHttpRequest — all of
+    // which React Native provides at runtime, but none of which ship type declarations with the
+    // RN types. The portability lint in scripts/sync-api-client.mjs is what actually stops
+    // browser-only APIs (localStorage, document, location) getting in; this just lets the shared
+    // file typecheck on both sides.
+    "lib": ["ES2020", "DOM"]
+  },
+  "include": ["src"]
+}

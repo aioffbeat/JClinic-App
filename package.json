@@ -1,0 +1,23 @@
+{
+  "name": "jclinic-mobile",
+  "version": "0.1.0",
+  "private": true,
+  "description": "JClinic mobile \u2014 Expo apps for patients and clinical staff, sharing the JClinic API client",
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "sync": "node scripts/sync-api-client.mjs",
+    "sync:check": "node scripts/sync-api-client.mjs --check",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "patient": "npm run start --workspace @jclinic-mobile/patient",
+    "staff": "npm run start --workspace @jclinic-mobile/staff"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.3"
+  }
+}

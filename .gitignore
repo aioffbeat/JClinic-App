@@ -1,0 +1,31 @@
+node_modules/
+.expo/
+dist/
+web-build/
+*.tsbuildinfo
+
+# native build output (Expo prebuild / EAS local)
+android/
+ios/
+
+# secrets & local config
+.env
+.env.*
+!.env.example
+*.local
+
+# EAS
+.easignore
+
+# editor / OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# keystores and signing material — never commit
+*.jks
+*.keystore
+*.p8
+*.p12
+*.mobileprovision

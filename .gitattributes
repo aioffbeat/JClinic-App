@@ -1,0 +1,4 @@
+# Match the jclinic repo: one line-ending convention regardless of OS. Without this, every
+# cross-platform commit becomes a whole-file diff of CRLF vs LF noise.
+* text=auto eol=lf
+*.sh text eol=lf
