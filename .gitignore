@@ -29,3 +29,4 @@ ios/
 *.p8
 *.p12
 *.mobileprovision
+.build-log.txt
