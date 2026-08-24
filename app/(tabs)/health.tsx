@@ -23,6 +23,19 @@ export default function Health() {
   return (
     <Screen refreshing={history.isRefetching} onRefresh={() => history.refetch()}>
       <H1>Health</H1>
+
+      {/* The record is more than visits. These are separate routes rather than sections because
+          each is a list of its own, and burying labs under a scroll of consultations is how
+          patients end up phoning the clinic to ask for a result they already have. */}
+      <View style={styles.shortcuts}>
+        <Shortcut label="Lab results" onPress={() => router.push('/labs')} />
+        <Shortcut label="Prescriptions" onPress={() => router.push('/prescriptions')} />
+        <Shortcut label="Tests due" onPress={() => router.push('/due-tests')} />
+        <Shortcut label="My plan" onPress={() => router.push('/plan')} />
+        <Shortcut label="Daily log" onPress={() => router.push('/lifestyle')} />
+      </View>
+
+      <Text style={styles.section}>Visits</Text>
       {history.isLoading && <Loading />}
 
       {history.isError && !visits.length && (
@@ -87,7 +100,31 @@ function summarise(v: PortalVisit): string | null {
   return flat.length > 120 ? `${flat.slice(0, 119)}…` : flat;
 }
 
+function Shortcut({ label, onPress }: { label: string; onPress: () => void }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [styles.shortcut, pressed && { opacity: 0.7 }]}
+      accessibilityRole="button"
+    >
+      <Text style={styles.shortcutText}>{label}</Text>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
+  shortcuts: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginBottom: space.lg },
+  shortcut: {
+    minHeight: 44,
+    justifyContent: 'center',
+    paddingHorizontal: space.lg,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: color.teal,
+    backgroundColor: color.surface,
+  },
+  shortcutText: { fontSize: 14, fontWeight: '600', color: color.teal },
+  section: { fontSize: 13, fontWeight: '700', color: color.slate, marginBottom: space.sm },
   head: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: space.sm },
   pills: { flexDirection: 'row', flexWrap: 'wrap', gap: space.xs, marginTop: space.sm },
   more: { fontSize: 13, fontWeight: '600', color: color.teal, marginTop: space.md },

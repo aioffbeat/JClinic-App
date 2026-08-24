@@ -3,6 +3,7 @@ import { Stack, useRouter } from 'expo-router';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { portalApi } from '@/src/api';
+import type { PortalSymptomReport } from '@/src/portal-types';
 import { Body, Button, Caption, Card, H1, Label, Loading, Notice, Screen, color, space } from '@/src/ui';
 
 /**
@@ -19,6 +20,12 @@ import { Body, Button, Caption, Card, H1, Label, Loading, Notice, Screen, color,
 export default function CheckIn() {
   const router = useRouter();
   const form = useQuery({ queryKey: ['portal', 'symptom-form'], queryFn: () => portalApi.symptomForm() });
+  // Past check-ins. Without these the questionnaire is write-only, and a patient has no way to see
+  // that they have already reported something getting worse.
+  const past = useQuery({
+    queryKey: ['portal', 'symptom-reports'],
+    queryFn: () => portalApi.symptomReports() as Promise<PortalSymptomReport[]>,
+  });
 
   const [answers, setAnswers] = useState<Record<string, number>>({});
   const [note, setNote] = useState('');
@@ -135,6 +142,19 @@ export default function CheckIn() {
         {submit.isError && (
           <Notice title="Could not send" body="Please try again once you have a connection." tone="bad" />
         )}
+
+        {!!(past.data ?? []).length && (
+          <>
+            <Text style={styles.section}>Your last check-ins</Text>
+            {(past.data ?? []).slice(0, 6).map((r) => (
+              <Card key={r.id}>
+                <Label>{new Date(r.createdAt).toLocaleDateString()}</Label>
+                <Caption>{flagLabel(r.flag)}</Caption>
+                {!!r.note && <Body muted>{r.note}</Body>}
+              </Card>
+            ))}
+          </>
+        )}
       </Screen>
     </>
   );
@@ -146,7 +166,14 @@ function optionsFor(type: 'scale' | 'yesno', options?: string[]) {
   return options ?? ['None', 'Mild', 'Moderate', 'Severe'];
 }
 
+function flagLabel(f: string | null) {
+  if (f === 'urgent') return 'Your clinic was alerted';
+  if (f === 'attention') return 'Flagged for review';
+  return 'Recorded';
+}
+
 const styles = StyleSheet.create({
+  section: { fontSize: 13, fontWeight: '700', color: color.slate, marginTop: space.lg, marginBottom: space.sm },
   options: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginTop: space.md },
   option: {
     minHeight: 44,

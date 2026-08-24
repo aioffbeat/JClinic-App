@@ -1,7 +1,8 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { portalApi, type PortalMedication } from '@/src/api';
-import { AsOf, Body, Caption, Card, H1, Label, Loading, Notice, Pill, Screen, color, space } from '@/src/ui';
+import type { PortalRefillRequest } from '@/src/portal-types';
+import { AsOf, Body, Button, Caption, Card, H1, H2, Label, Loading, Notice, Pill, Screen, color, space } from '@/src/ui';
 
 /**
  * Dose ticking.
@@ -54,7 +55,25 @@ export default function Medicines() {
     onSettled: () => qc.invalidateQueries({ queryKey: ['portal', 'medications'] }),
   });
 
+  const outside = useQuery({ queryKey: ['portal', 'outside-medications'], queryFn: () => portalApi.outsideMedications() });
+  const refills = useQuery({
+    queryKey: ['portal', 'refills'],
+    queryFn: () => portalApi.refills() as Promise<PortalRefillRequest[]>,
+  });
+
+  const askRefill = useMutation({
+    mutationFn: () => portalApi.requestRefill({}),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['portal', 'refills'] });
+      Alert.alert('Requested', 'Your clinic will prepare your refill and let you know.');
+    },
+    onError: () => Alert.alert('Could not request', 'Please try again, or call the clinic.'),
+  });
+
   const rows = meds.data ?? [];
+  const outsideRows = outside.data ?? [];
+  const refillRows = refills.data ?? [];
+  const openRefill = refillRows.find((r) => r.status !== 'done' && r.status !== 'rejected');
   const nothingDue = rows.length > 0 && rows.every((m) => !m.anyDue);
 
   return (
@@ -123,12 +142,72 @@ export default function Medicines() {
         </Card>
       ))}
 
+      {/* Refills are a request, not a transaction — the clinic dispenses. Showing an open request
+          matters more than the button: without it patients ask again, and again. */}
+      {!!rows.length && (
+        <Card>
+          <H2>Need a refill?</H2>
+          {openRefill ? (
+            <>
+              <Body>Your clinic is working on your last request.</Body>
+              <Pill text={openRefill.status} tone="neutral" />
+              <Caption>{`Asked on ${new Date(openRefill.createdAt).toLocaleDateString()}`}</Caption>
+            </>
+          ) : (
+            <>
+              <Body muted>Ask your clinic to prepare your next course.</Body>
+              <Button
+                title="Request a refill"
+                onPress={() => askRefill.mutate()}
+                loading={askRefill.isPending}
+                style={{ marginTop: space.md }}
+              />
+            </>
+          )}
+        </Card>
+      )}
+
+      {/* Medicines from elsewhere. Read-only by design: this clinic did not prescribe them and must
+          not appear to have. The one actionable thing is a change the doctor has recommended. */}
+      {!!outsideRows.length && (
+        <>
+          <Text style={styles.section}>From other doctors</Text>
+          {outsideRows.map((m) => (
+            <Card key={m.label}>
+              <Text style={styles.name}>{[m.label, m.strength].filter(Boolean).join(' ')}</Text>
+              <Caption>{[m.form, m.frequencyText || m.frequency, m.indication].filter(Boolean).join(' · ')}</Caption>
+              {!!m.prescribedBy && <Caption>{`Prescribed by ${m.prescribedBy}`}</Caption>}
+
+              {!!m.recommendation && (
+                <View style={styles.reco}>
+                  <Label>Your doctor suggests</Label>
+                  <Body>{m.recommendation.what}</Body>
+                  {!!m.recommendation.toStrength && <Caption>{`New strength: ${m.recommendation.toStrength}`}</Caption>}
+                  {!!m.recommendation.toFrequencyText && <Caption>{`New timing: ${m.recommendation.toFrequencyText}`}</Caption>}
+                  {!!m.recommendation.reason && <Body muted>{m.recommendation.reason}</Body>}
+                  <Caption>Please confirm with the doctor who prescribed it before changing.</Caption>
+                </View>
+              )}
+            </Card>
+          ))}
+        </>
+      )}
+
       <AsOf at={meds.dataUpdatedAt || null} />
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
+  section: { fontSize: 13, fontWeight: '700', color: color.slate, marginTop: space.lg, marginBottom: space.sm },
+  reco: {
+    marginTop: space.md,
+    padding: space.md,
+    borderRadius: 10,
+    backgroundColor: '#FFF6E6',
+    borderWidth: 1,
+    borderColor: color.marigold,
+  },
   head: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space.sm },
   name: { fontSize: 16, fontWeight: '700', color: color.ink, flexShrink: 1 },
   slots: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginTop: space.md },

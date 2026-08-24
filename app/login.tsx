@@ -119,6 +119,13 @@ export default function Login() {
 
         {!!error && <Notice title="Could not sign in" body={error} tone="bad" />}
 
+        <Button
+          title="New here? Register"
+          variant="secondary"
+          onPress={() => router.push('/register')}
+          style={{ marginTop: space.md }}
+        />
+
         <Caption>
           Your records are private to you. We only ever send a code to a number already registered
           with the clinic.

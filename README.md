@@ -127,19 +127,32 @@ Cached screens carry an "as of" stamp.
 - **`npm run bundle` is the check that matters.** Typecheck did not catch a single one of those four
   Metro failures; bundling caught all of them.
 
-## Still to build
+## Coverage
 
-Roughly half the portal is surfaced. Remaining, all with endpoints and types already in place:
+**55 of the portal's 56 patient methods are surfaced.** The one that is not is `services`, and that
+is deliberate: the server removed the service picker from booking on purpose — patients were being
+asked to choose from an internal billing catalogue — and replaced it with a fixed
+"Doctor consultation / Therapy" pair that reception refines on confirmation. Wiring `services()`
+back into the app would undo that decision.
 
-- **Onboarding** — public self-registration (clinic choice, consent, first visit) and the visiting
-  charge: UPI deep-link into GPay/PhonePe, plus Razorpay in a WebView (their web checkout script
-  cannot run in RN; it stays behind the server's existing dormant flag).
-- **Health** — labs, lab report camera upload, prescriptions, due tests and lab-partner booking,
-  care plan, packages and recommendations.
-- **Book** — the booking flow itself: slots, services, reschedule requests.
-- **Medicines** — outside medications and refill requests.
-- **Lifestyle** — daily logging, and symptom-report history.
+| Screen | Covers |
+|---|---|
+| Home | follow-up, balances, unread, feedback prompt, unpaid-registration banner, family |
+| Health | visit list → full record incl. Ayurveda assessment, plus labs / prescriptions / tests due / plan / daily log |
+| Medicines | dose ticking, refill requests, medicines from other doctors |
+| Chat | messaging, closed-conversation handling |
+| Book | upcoming and past, cancel, reschedule request, booking flow |
+| Register → Pay | clinic choice, OTP, consent, then UPI deep-link or Razorpay in a WebView |
+| Check-in | ePRO questionnaire and history |
+| Family · Feedback | caregiver access; requested and volunteered feedback with publish consent |
+
+## Still to do
+
 - Icons and splash artwork; EAS project id, build profiles, store listings.
+- Play **Health apps** declaration and Data safety form; Apple health-data privacy answers.
 - **Blocker:** route `apps/web/src/pages/Legal.tsx` in the web app — it is exported but imported by
   nothing, so the Terms / Privacy pages are unreachable, and both stores require a live privacy
   policy URL for a health app.
+- **Blocker:** the `device_session` migration has never run against a real Postgres. Sign-in,
+  refresh and push registration all write to that table, so nothing here works against production
+  until `prisma migrate deploy` has run.

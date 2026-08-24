@@ -1,4 +1,6 @@
 import { Alert, StyleSheet, Text, View } from 'react-native';
+import { useState } from 'react';
+import { useRouter } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { portalApi, type PortalAppointment } from '@/src/api';
 import { AsOf, Body, Button, Caption, Card, H1, Label, Loading, Notice, Pill, Screen, color, space } from '@/src/ui';
@@ -17,11 +19,39 @@ import { AsOf, Body, Button, Caption, Card, H1, Label, Loading, Notice, Pill, Sc
  */
 export default function Book() {
   const qc = useQueryClient();
+  const router = useRouter();
 
   const appts = useQuery({
     queryKey: ['portal', 'appointments'],
     queryFn: () => portalApi.appointments(),
   });
+
+  const [rescheduling, setRescheduling] = useState<string | null>(null);
+
+  /**
+   * A reschedule is a REQUEST, not a move: the clinic confirms it. The API takes the proposed time
+   * and records it against the appointment, which is why the card shows "requested for" until the
+   * clinic acts. Proposing the same weekday a week later is the overwhelmingly common case and
+   * saves a date picker on a screen that does not otherwise need one.
+   */
+  const reschedule = useMutation({
+    mutationFn: ({ id, startsAt }: { id: string; startsAt: string }) => portalApi.requestReschedule(id, startsAt),
+    onSuccess: () => {
+      setRescheduling(null);
+      qc.invalidateQueries({ queryKey: ['portal', 'appointments'] });
+      Alert.alert('Requested', 'The clinic will confirm your new time.');
+    },
+    onError: () => Alert.alert('Could not request', 'Please call the clinic instead.'),
+  });
+
+  function askReschedule(a: PortalAppointment) {
+    const next = new Date(new Date(a.startsAt).getTime() + 7 * 86400_000).toISOString();
+    setRescheduling(a.id);
+    Alert.alert('Move to next week?', `Ask the clinic for ${when(next)} instead.`, [
+      { text: 'Not now', style: 'cancel', onPress: () => setRescheduling(null) },
+      { text: 'Request', onPress: () => reschedule.mutate({ id: a.id, startsAt: next }) },
+    ]);
+  }
 
   const cancel = useMutation({
     mutationFn: (id: string) => portalApi.cancelAppointment(id),
@@ -43,6 +73,7 @@ export default function Book() {
   return (
     <Screen refreshing={appts.isRefetching} onRefresh={() => appts.refetch()}>
       <H1>Appointments</H1>
+      <Button title="Book a visit" onPress={() => router.push('/book-appointment')} style={{ marginBottom: space.lg }} />
       {appts.isLoading && <Loading />}
 
       {appts.isError && !appts.data && (
@@ -68,6 +99,16 @@ export default function Book() {
 
           {!!a.rescheduleRequestedFor && (
             <Caption>{`Reschedule requested for ${when(a.rescheduleRequestedFor)} — the clinic will confirm.`}</Caption>
+          )}
+
+          {a.canReschedule && !a.rescheduleRequestedFor && (
+            <Button
+              title="Ask to move this"
+              variant="secondary"
+              onPress={() => askReschedule(a)}
+              loading={reschedule.isPending && rescheduling === a.id}
+              style={{ marginTop: space.md }}
+            />
           )}
 
           {a.canCancel ? (

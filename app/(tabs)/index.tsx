@@ -19,6 +19,12 @@ export default function Home() {
   const bills = useQuery({ queryKey: ['portal', 'bills'], queryFn: () => portalApi.bills() });
   const unread = useQuery({ queryKey: ['portal', 'unread'], queryFn: () => portalApi.unread() });
   const feedback = useQuery({ queryKey: ['portal', 'feedback', 'pending'], queryFn: () => portalApi.feedbackPending() });
+  // A self-registered patient whose visiting charge is unpaid has an UNCONFIRMED first visit. That
+  // must stay visible and reachable, or registration quietly dead-ends at the clinic door.
+  const registration = useQuery({
+    queryKey: ['portal', 'registration', 'status'],
+    queryFn: () => portalApi.registrationStatus(),
+  });
 
   // PortalBill carries `total` and `paidAmount` — there is no `outstanding` field. This screen
   // used to read one, so every balance silently showed as zero.
@@ -42,6 +48,14 @@ export default function Home() {
       {!!me?.diseases.length && <Caption>{me.diseases.map((d) => d.disease).join(' · ')}</Caption>}
 
       {loading && <Loading />}
+
+      {registration.data?.hasRegistrationVisit && registration.data.payState !== 'paid' && (
+        <Card>
+          <Label>Your first visit is not confirmed yet</Label>
+          <Body muted>The visiting charge confirms your appointment.</Body>
+          <Button title="Pay now" onPress={() => router.push('/pay')} style={{ marginTop: space.md }} />
+        </Card>
+      )}
 
       {!!followup.data && (
         <Card>
