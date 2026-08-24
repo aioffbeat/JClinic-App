@@ -46,8 +46,6 @@ const config: ExpoConfig = {
 
   plugins: [
     'expo-router',
-    // SDK 57 moved splash out of the top-level config and into this plugin.
-    ['expo-splash-screen', { backgroundColor: '#F2F7F6', resizeMode: 'contain' }], // Mist, per BRAND.md
 
     'expo-secure-store',
     [
