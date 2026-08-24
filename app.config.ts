@@ -60,9 +60,19 @@ const config: ExpoConfig = {
 
   experiments: { typedRoutes: true },
 
+  // The EAS account that owns the builds and the push credentials.
+  owner: 'drjoshi000s-team',
+
   extra: {
-    // Populated by EAS at build time; used by GET /v1/mobile/config version gating.
-    eas: { projectId: process.env.EAS_PROJECT_ID_PATIENT ?? undefined },
+    /**
+     * The EAS project. `eas init` normally writes this itself, but it cannot edit a dynamic
+     * app.config.ts, so it lives here by hand — the id is stable for the life of the project.
+     *
+     * It is not decoration: expo-notifications needs it to mint a push token
+     * (getExpoPushTokenAsync in src/lib/push.ts), so a missing id means push registration returns
+     * `no_project_id` and every reminder silently fails to arrive.
+     */
+    eas: { projectId: process.env.EAS_PROJECT_ID_PATIENT ?? '64f3b013-d9b0-46b2-8593-e9d923873166' },
   },
 };
 
