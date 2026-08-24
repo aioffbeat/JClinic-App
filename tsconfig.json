@@ -1,0 +1,18 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    // DOM is here for its fetch / FormData / Blob / XMLHttpRequest TYPES only, not because a browser
+    // exists. src/api/api.ts is shared verbatim with the web app and is written against them; React
+    // Native provides all four at runtime but ships no declarations. The portability lint in
+    // scripts/sync-api-client.mjs is what actually keeps browser-ONLY APIs (localStorage, document,
+    // location) out of the shared layer.
+    "lib": ["ES2020", "DOM"],
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"],
+  "exclude": ["node_modules"]
+}

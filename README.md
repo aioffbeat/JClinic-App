@@ -1,145 +1,145 @@
-# JClinic Mobile
+# Dr. Joshi's — patient app
 
-Native iOS and Android apps for **Dr. Joshi's**, built on Expo (SDK 57) against the same `/v1` API
-the web app uses. The web app at `clinic.drjoshis.in` is unchanged and remains the desktop surface.
+The patient app for the JClinic patient portal. Expo (SDK 57), iOS and Android, talking to the same
+`/v1` API as the web app at `clinic.drjoshis.in`, which is unchanged and remains the desktop surface.
 
-Two apps, one codebase:
-
-| App | Who | Bundle id |
-|---|---|---|
-| `apps/patient` — *Dr. Joshi's* | Patients and their caregivers | `in.drjoshis.jclinic.patient` |
-| `apps/staff` — *JClinic Staff* | Doctors, front desk, telecallers | `in.drjoshis.jclinic.staff` |
-
-They are separate binaries rather than one app with a role switch. Patients must never see a staff
-login; the two need different permission manifests (staff asks for `CALL_PHONE` for Ozonetel
-click-to-dial, which a patient app must never request); and Apple reviews a consumer health app very
-differently from an internal clinical tool. A rejection of one must not block the other.
-
----
-
-## Layout
+**Patients only.** There is no staff mode and no staff login. A clinic-facing app existed briefly in
+this repo and was removed; it is preserved on the `two-app-archive` branch if it is ever wanted back.
 
 ```
-apps/patient          Expo app — 5 tabs: Home · Health · Medicines · Chat · Book
-apps/staff            Expo app — tabs driven by the signed-in user's granted permissions
-packages/api-client   The JClinic API surface. MOSTLY GENERATED — see "The shared client" below.
-packages/core         Mobile-only: bootstrap, device identity, sessions, push, query client, permissions
-packages/ui           Design tokens from BRAND.md, plus the shared primitives
-scripts/              sync-api-client.mjs
+app/          Expo Router routes — the screens
+src/api/      GENERATED. The JClinic API surface, copied verbatim from the web app.
+src/lib/      API bootstrap, device identity, sessions, push, query client, platform adapter
+src/ui/       design tokens from BRAND.md, plus the shared primitives
+scripts/      sync-api-client.mjs
 ```
 
 ## Getting started
 
 ```bash
 npm install
-cp .env.example apps/patient/.env   # and apps/staff/.env
-npm run patient                     # or: npm run staff
+cp .env.example .env
+npm start
 ```
 
-`EXPO_PUBLIC_API_BASE` must point at an API origin with **no trailing slash and no `/v1`** — the
-client appends that itself. From a real device against a local API, use the machine's LAN IP
-(`http://192.168.1.x:3000`), not `localhost`, which on a phone means the phone.
+`EXPO_PUBLIC_API_BASE` needs an API origin with **no trailing slash and no `/v1`** — the client
+appends that itself. From a real device against a local API use the machine's LAN IP
+(`http://192.168.1.x:3000`); `localhost` on a phone means the phone.
+
+```bash
+npm run verify   # sync check + typecheck
+npm run bundle   # what actually proves it works — see below
+```
 
 ---
 
 ## The shared client
 
-`packages/api-client/src/` is **copied verbatim** from the JClinic web app — `api.ts` (2,745 lines,
-39 typed API namespaces, 246 exported types) plus six pure-logic modules. It is the entire backend
-contract, already proven in production, and it is shared rather than reimplemented.
+`src/api/` is **copied verbatim** from the JClinic web app: `api.ts` (2,800+ lines, 39 typed API
+namespaces, 246 exported types) plus six pure-logic modules. It is the entire backend contract,
+already proven in production, and it is shared rather than reimplemented.
 
 ```bash
 npm run sync          # copy from the jclinic repo
-npm run sync:check    # exit 1 if the two have drifted — run this in CI
+npm run sync:check    # exit 1 on drift, browser globals, or `any` — run this in CI
 ```
 
-Three rules follow from that:
+Three rules follow:
 
-1. **Never edit anything under `packages/api-client/src/` directly.** Edit it in
-   `jclinic/apps/web/src/`, then run `npm run sync`. Every generated file carries a banner saying so,
-   and `sync:check` fails the build if a local edit exists.
-2. **The destination layout mirrors `apps/web/src/` exactly.** Those files import each other by
-   relative path (`due-test-ui.ts` does `from './api'` and `from './lib/datetime'`), so flattening
-   them would force the sync script to rewrite imports — and a transformed copy cannot be
-   byte-compared, which would cost the drift guard entirely.
-3. **No browser globals may enter the shared layer.** The sync script refuses to copy a file
-   containing `localStorage`, `document`, `location`, `window`, `navigator` or
-   `URL.createObjectURL`, naming the file and line. Everything host-specific is injected through
-   `ApiPlatform` — implemented for the browser in `jclinic/apps/web/src/platform.ts` and for React
-   Native in `packages/api-client/src/native-platform.ts`.
+1. **Never edit anything under `src/api/`.** Edit it in `jclinic/apps/web/src/`, then `npm run sync`.
+   Every generated file carries a banner saying so, and `sync:check` fails if a local edit exists.
+2. **The layout mirrors `apps/web/src/` exactly** — which is why `datetime.ts` keeps its `lib/`
+   folder. Those files import each other by relative path, so flattening them would force the sync
+   script to rewrite imports, and a transformed copy cannot be byte-compared. The drift guard is the
+   whole point.
+3. **No browser globals in the shared layer.** The sync script refuses to copy a file containing
+   `localStorage`, `document`, `location`, `window`, `navigator` or `URL.createObjectURL`, naming the
+   file and line. Everything host-specific is injected through `ApiPlatform` — the browser
+   implementation lives in `jclinic/apps/web/src/platform.ts`, the React Native one in
+   `src/lib/native-platform.ts`.
 
 `ApiPlatform.storage.get` is deliberately **synchronous**: `api()` reads the token on every request,
-and making it async would force all 39 namespaces to change shape. The native adapter therefore
-hydrates an in-memory map at boot and mirrors writes to storage in the background — which is why
-`bootstrapApi()` must be awaited before any screen renders.
+and making it async would force all 39 namespaces to change shape. The native adapter hydrates an
+in-memory map at boot and mirrors writes out in the background — which is why `bootstrapApi()` must
+be awaited before any screen renders.
 
-Tokens live in **SecureStore** (hardware-backed keystore); the cached user snapshot lives in
-AsyncStorage, because it routinely exceeds SecureStore's 2 KB comfort limit and is not a credential —
-the server re-validates every request against its own permission cache regardless.
+Tokens live in **SecureStore**; the cached display name and patient id live in AsyncStorage, because
+they are not credentials and the server re-validates every request regardless.
 
----
+## No `any` in hand-written code
+
+`sync:check` fails the build on `as any`, `: any` or `<any>` anywhere outside `src/api/`.
+
+This is not style policing. Four screens shipped reading fields that do not exist —
+`bill.outstanding`, `visit.visitAt`, `message.fromStaff`, and an appointments *object* iterated as an
+array — and every one of them typechecked, because a cast had switched TypeScript off at exactly the
+point it was about to help. The client carries 246 accurate interfaces; the only way to get them
+wrong is to opt out.
+
+For a genuine platform boundary whose types we do not own, put `// any-ok: <reason>` on the line
+before. Requiring a stated reason keeps a deliberate exception cheap and a lazy one visible.
 
 ## Sessions
 
-Both apps use refresh tokens, added to the API for this purpose (see `MOBILE.md` in the jclinic
-repo). The refresh token is stored hashed server-side, **rotated on every use**, and replaying a
-consumed one revokes the whole session as suspected theft.
+Refresh tokens, added to the API for this app (see `MOBILE.md` in the jclinic repo). Stored hashed
+server-side, **rotated on every use**, and replaying a consumed one revokes the whole session as
+suspected theft. Two consequences the code handles, and which are easy to reintroduce:
 
-Two consequences the code takes care of, and which are easy to reintroduce:
+- **Refresh calls are de-duplicated.** Several screens can 401 at once on resume; because the server
+  rotates every call, a second concurrent refresh would present an already-consumed token and the
+  server would correctly read a routine resume as theft. `refreshAccessToken()` collapses concurrent
+  callers into one in-flight promise.
+- **Renewal happens on resume, not only on failure.** The access token lives about an hour and a
+  phone is backgrounded for far longer.
 
-- **Refresh calls must be de-duplicated.** Several screens can 401 at once on app resume. Because
-  the server rotates on every call, a second concurrent refresh would present a token the first has
-  already consumed — and the server would correctly treat a routine resume as theft and sign the
-  user out. `refreshAccessToken()` collapses concurrent calls into one in-flight promise.
-- **Renew on resume, not only on failure.** The access token lives about an hour and a phone is
-  backgrounded for far longer, so both apps refresh when `AppState` goes active.
-
-The patient app also handles caregiver access: one phone legitimately holds several charts in a
-family. Switching re-mints the token server-side — the active patient is always the token's subject,
-never a header — so the query cache is dropped on switch.
+One phone can hold several charts — a parent and child, or a caregiver with a grant. Switching
+re-mints the token server-side (the active patient is the token's subject, never a parameter), so the
+query cache is dropped on switch.
 
 ## Push
 
-`expo-notifications` + Expo's push service, which forwards to FCM and APNs. Registration happens on
+`expo-notifications` via Expo's push service, which forwards to FCM and APNs. Registration runs on
 **every** launch, not just the first: Expo reissues tokens on OS updates, reinstalls and backup
 restores, and a stale token is indistinguishable from a working one until a send silently fails.
 
-Push is a *transport* for notification rows the API already writes, not a separate message channel.
-The medication reminders that fire at 08:00 / 14:00 / 20:00 IST are the reason this app exists —
-before push they only ever became a row nobody saw unless they happened to open the website.
+Push is a *transport* for notification rows the API already writes, not a separate channel. The dose
+reminders that fire at 08:00 / 14:00 / 20:00 IST are why this app exists — before push they only
+became a row nobody saw unless they happened to open the website.
 
 ## Offline
 
-Read-only. TanStack Query is persisted to AsyncStorage with a **24-hour** ceiling, and only
-successful queries are written — persisting an errored query would reopen the app showing a failure
-that has since resolved. Writes are never queued and never retried: everything these apps write is
-clinical or financial, and a duplicate dose tick or booking is worse than a visible failure the user
-can repeat deliberately. Every cached screen carries an "as of" stamp.
+Read-only. TanStack Query persisted to AsyncStorage with a **24-hour** ceiling, and only successful
+queries are written — persisting an errored one would reopen the app showing a failure that has since
+resolved. Writes are never queued or retried: everything here is clinical or financial, and a
+duplicate dose tick or booking is worse than a visible failure the user can repeat deliberately.
+Cached screens carry an "as of" stamp.
 
 ---
 
 ## Notes for whoever picks this up
 
-- **npm workspaces, not pnpm.** pnpm 11 requires Node ≥ 22.13 and this project was set up on Node
-  20; npm also avoids pnpm's symlink friction with Metro.
-- **`metro.config.js` keeps hierarchical lookup ON**, which is npm-specific and deliberate — npm
-  nests `expo-modules-core` under `expo/node_modules`, and disabling the walk (as the Expo docs
-  suggest for pnpm) makes it invisible and the bundle fails. The comment in the file explains it.
-- **`babel-preset-expo` and `expo-splash-screen` are explicit dependencies** even though they arrive
-  transitively: Babel resolves presets from the app directory, and the config-plugin resolver needs
-  the plugin locally resolvable. npm nests both.
-- **Pin native modules to the SDK.** `npx expo install --check` in either app is the authority; a
-  wildcard peer range in an internal package will quietly hoist the wrong major (that is how
-  `async-storage` 3.x once landed next to the SDK's 2.2.0). The internal packages therefore declare
-  their peers as `optional`.
+- **Single app, stock Metro config.** This was a two-app npm workspace, and nearly every build
+  failure came from hoisting: `disableHierarchicalLookup` hiding `expo-modules-core`, an internal
+  `^0.87.0` peer pinning React Native against the SDK, `async-storage` 3.x beside the SDK's 2.2.0,
+  `babel-preset-expo` nested where the app could not see it. Flattening deleted that entire class of
+  problem — `metro.config.js` is now `getDefaultConfig(__dirname)` and nothing else. Keep it that way.
+- **Pin native modules to the SDK.** `npx expo install --check` is the authority.
+- **`npm run bundle` is the check that matters.** Typecheck did not catch a single one of those four
+  Metro failures; bundling caught all of them.
 
-## Still to do
+## Still to build
 
-- Icons and splash assets (the configs reference brand colours but no artwork yet).
-- Booking flow, lab upload from the camera, and the ePRO check-in are routed but not built.
-- Staff app: visit detail, vitals capture, attachment upload, and proper Ozonetel click-to-dial —
-  the leads screen currently uses a plain `tel:` link, which does not record the call against the
-  lead. Doing it properly needs the agent-Ready state handling the web app has.
-- EAS project ids, build profiles, and store listings.
-- Route the jclinic web app's `Legal.tsx` (currently dead code) — both stores require a live,
-  public privacy-policy URL for a health app.
+Roughly half the portal is surfaced. Remaining, all with endpoints and types already in place:
+
+- **Onboarding** — public self-registration (clinic choice, consent, first visit) and the visiting
+  charge: UPI deep-link into GPay/PhonePe, plus Razorpay in a WebView (their web checkout script
+  cannot run in RN; it stays behind the server's existing dormant flag).
+- **Health** — labs, lab report camera upload, prescriptions, due tests and lab-partner booking,
+  care plan, packages and recommendations.
+- **Book** — the booking flow itself: slots, services, reschedule requests.
+- **Medicines** — outside medications and refill requests.
+- **Lifestyle** — daily logging, and symptom-report history.
+- Icons and splash artwork; EAS project id, build profiles, store listings.
+- **Blocker:** route `apps/web/src/pages/Legal.tsx` in the web app — it is exported but imported by
+  nothing, so the Terms / Privacy pages are unreachable, and both stores require a live privacy
+  policy URL for a health app.
