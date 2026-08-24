@@ -2,7 +2,7 @@
   "name": "jclinic-patient",
   "version": "0.1.0",
   "private": true,
-  "description": "Dr. Joshi's — the patient app for the JClinic patient portal",
+  "description": "Dr. Joshi's \u2014 the patient app for the JClinic patient portal",
   "main": "expo-router/entry",
   "engines": {
     "node": ">=20"
@@ -15,7 +15,10 @@
     "sync": "node scripts/sync-api-client.mjs",
     "sync:check": "node scripts/sync-api-client.mjs --check",
     "verify": "npm run sync:check && npm run typecheck",
-    "bundle": "expo export --platform android --output-dir .expo/export-check"
+    "bundle": "expo export --platform android --output-dir .expo/export-check",
+    "build:apk": "eas build --platform android --profile preview",
+    "build:ios": "eas build --platform ios --profile preview",
+    "build:play": "eas build --platform android --profile production"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",

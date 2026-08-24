@@ -31,6 +31,37 @@ npm run verify   # sync check + typecheck
 npm run bundle   # what actually proves it works — see below
 ```
 
+## Getting an installable app
+
+`npm run bundle` produces a JavaScript bundle, **not an app you can install**. An APK or IPA comes
+from EAS Build, which runs in Expo's cloud — no Android Studio or Xcode needed, and no Mac for iOS.
+
+One-time setup (needs an interactive terminal — the login is a browser flow):
+
+```bash
+npm i -g eas-cli
+eas login            # or create an account at expo.dev
+eas init             # creates the EAS project and writes its id into app.config.ts
+```
+
+Then, for an APK you can sideload onto any Android phone:
+
+```bash
+npm run build:apk
+```
+
+It builds in the cloud (~10-15 min) and prints a download link; `eas build:list` shows it again.
+Install it by opening the link on the phone and allowing "install from unknown sources".
+
+iOS is harder and not optional-harder: `npm run build:ios` needs an **Apple Developer account
+($99/yr)**, and the device's UDID has to be registered before an ad-hoc build will install. There
+is no way around that — Apple does not allow sideloading.
+
+For the Play Store, `npm run build:play` produces an `.aab` instead of an APK.
+
+> The `preview-local` profile in `eas.json` points at a LAN IP for testing against a local API.
+> Change the address to your machine's before using it.
+
 ---
 
 ## The shared client
