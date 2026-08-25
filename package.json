@@ -2,7 +2,7 @@
   "name": "jclinic-patient",
   "version": "0.1.0",
   "private": true,
-  "description": "Dr. Joshi's \u2014 the patient app for the JClinic patient portal",
+  "description": "Dr. Joshi's — the patient app for the JClinic patient portal",
   "main": "expo-router/entry",
   "engines": {
     "node": ">=20"
@@ -32,6 +32,7 @@
     "expo-device": "~57.0.1",
     "expo-file-system": "~57.0.5",
     "expo-image-picker": "~57.0.12",
+    "expo-linear-gradient": "~57.0.1",
     "expo-linking": "~57.0.7",
     "expo-notifications": "~57.0.13",
     "expo-router": "~57.0.15",

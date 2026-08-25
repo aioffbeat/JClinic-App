@@ -126,6 +126,40 @@ function scanForAny(dir, hits = []) {
   return hits;
 }
 
+/**
+ * Every package imported by our own code must be declared in package.json.
+ *
+ * This has broken two cloud builds. Both times a dependency was installed, used, and then quietly
+ * removed from package.json by a `git checkout package.json` that was tidying up after
+ * `expo prebuild` — which rewrites that file. node_modules still held the package, so the local
+ * bundle passed and only the server, installing from package.json alone, failed. Typecheck cannot
+ * see it either: the types resolve from node_modules just fine.
+ */
+function scanImports(dir, declared, hits = []) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (['node_modules', '.git', '.expo'].includes(entry.name)) continue;
+      scanImports(full, declared, hits);
+      continue;
+    }
+    if (!/\.tsx?$/.test(entry.name)) continue;
+    const text = readFileSync(full, 'utf8');
+    for (const m of text.matchAll(/^\s*import\s[^'"]*['"]([^'"]+)['"]/gm)) {
+      const spec = m[1];
+      // Relative paths and our own @/ alias resolve within the repo, not from node_modules.
+      if (spec.startsWith('.') || spec.startsWith('@/')) continue;
+      // Scoped packages keep two segments; everything else takes the first.
+      const pkg = spec.startsWith('@') ? spec.split('/').slice(0, 2).join('/') : spec.split('/')[0];
+      // Node builtins are always available.
+      if (pkg.startsWith('node:')) continue;
+      if (declared.has(pkg)) continue;
+      hits.push(`    ${rel(full)}  imports "${pkg}", which is not in package.json`);
+    }
+  }
+  return [...new Set(hits)];
+}
+
 const check = process.argv.includes('--check');
 const problems = [];
 const changed = [];
@@ -178,6 +212,24 @@ if (check) {
     problems.push(
       `  \`any\` in hand-written code — use the real types from src/api,\n` +
         `  or mark a genuine platform boundary with \`// any-ok: <reason>\`:\n${anyHits.join('\n')}`,
+    );
+  }
+
+  const pkg = JSON.parse(readFileSync(join(REPO, 'package.json'), 'utf8'));
+  const declared = new Set([
+    ...Object.keys(pkg.dependencies ?? {}),
+    ...Object.keys(pkg.devDependencies ?? {}),
+    'react-native', // provided by the Expo runtime even when not listed directly
+  ]);
+  const missing = [];
+  for (const dir of ['app', 'src']) {
+    const target = join(REPO, dir);
+    if (existsSync(target)) scanImports(target, declared, missing);
+  }
+  if (missing.length) {
+    problems.push(
+      `  imported but undeclared — the cloud build installs from package.json only,\n` +
+        `  so these bundle locally and fail there:\n${missing.join('\n')}`,
     );
   }
 }
