@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { StyleSheet, TextInput, View } from 'react-native';
+import { StyleSheet, Text, TextInput, View } from 'react-native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { portalApi } from '@/src/api';
-import { Body, Button, Caption, Card, H1, Loading, Notice, Screen, color, space } from '@/src/ui';
+import { Button, Empty, H1, Loading, Notice, Screen, color, space } from '@/src/ui';
 
 /**
  * In-app messaging.
@@ -54,18 +54,26 @@ export default function Chat() {
       )}
 
       {!thread.isLoading && !messages.length && !thread.isError && (
-        <Notice title="No messages yet" body="Ask your clinic a question — they usually reply within a working day." />
+        <Empty
+          icon="chat"
+          title="No messages yet"
+          body="Ask your clinic a question — they usually reply within a working day."
+        />
       )}
 
+      {/* Bubbles, not cards. A conversation read as a column of identical white rectangles gave no
+          sense of who said what; sides and colour do that work without a label on every line. */}
       {messages.map((m) => {
         const fromStaff = m.sender === 'staff';
         return (
-          <Card key={m.id} style={fromStaff ? undefined : styles.mine}>
-            <Body>{m.body}</Body>
-            <Caption>
-              {`${fromStaff ? m.senderName ?? 'Clinic' : 'You'} · ${new Date(m.createdAt).toLocaleString()}`}
-            </Caption>
-          </Card>
+          <View key={m.id} style={[styles.bubbleRow, fromStaff ? styles.rowStaff : styles.rowMine]}>
+            <View style={[styles.bubble, fromStaff ? styles.bubbleStaff : styles.bubbleMine]}>
+              <Text style={[styles.bubbleText, !fromStaff && { color: '#FFFFFF' }]}>{m.body}</Text>
+              <Text style={[styles.bubbleMeta, !fromStaff && { color: 'rgba(255,255,255,0.75)' }]}>
+                {`${fromStaff ? m.senderName ?? 'Clinic' : 'You'} · ${time(m.createdAt)}`}
+              </Text>
+            </View>
+          </View>
         );
       })}
 
@@ -101,8 +109,28 @@ export default function Chat() {
   );
 }
 
+function time(iso: string) {
+  const d = new Date(iso);
+  const today = new Date().toDateString() === d.toDateString();
+  return today
+    ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+}
+
 const styles = StyleSheet.create({
-  mine: { backgroundColor: '#E8F4F4' },
+  bubbleRow: { flexDirection: 'row', marginBottom: space.sm },
+  rowStaff: { justifyContent: 'flex-start' },
+  rowMine: { justifyContent: 'flex-end' },
+  bubble: { maxWidth: '84%', paddingHorizontal: space.lg, paddingVertical: space.md, borderRadius: 18 },
+  bubbleStaff: {
+    backgroundColor: color.surface,
+    borderWidth: 1,
+    borderColor: color.hairline,
+    borderBottomLeftRadius: 6,
+  },
+  bubbleMine: { backgroundColor: color.teal, borderBottomRightRadius: 6 },
+  bubbleText: { fontSize: 15, lineHeight: 21, color: color.ink },
+  bubbleMeta: { fontSize: 11, color: color.slate, marginTop: 5 },
   composer: { marginTop: space.md },
   input: {
     minHeight: 80,

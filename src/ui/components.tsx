@@ -13,6 +13,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { color, gradient, radius, shadow, space, type as typo, MIN_TOUCH } from './theme';
+import { Icon, type IconName } from './icon';
 
 /** Standard screen frame: brand background, safe-area aware, optional pull-to-refresh. */
 export function Screen({
@@ -256,7 +257,104 @@ export function AsOf({ at }: { at: number | null }) {
   return <Text style={[typo.caption, { marginTop: space.sm }]}>{text}</Text>;
 }
 
+/**
+ * A tappable row with an icon, a title and a chevron.
+ *
+ * The other tabs were a card per item, which turns any list into a wall of identical white
+ * rectangles with no rhythm. Grouping rows inside ONE card gives a list a shape — the icon carries
+ * the meaning, the divider carries the structure, and the card carries the group.
+ */
+export function Row({
+  icon,
+  title,
+  subtitle,
+  meta,
+  tone,
+  onPress,
+  first,
+}: {
+  icon?: IconName;
+  title: string;
+  subtitle?: string;
+  meta?: string;
+  tone?: string;
+  onPress?: () => void;
+  first?: boolean;
+}) {
+  const body = (
+    <View style={[s.row, !first && s.rowDivider]}>
+      {!!icon && (
+        <View style={[s.rowIcon, tone ? { backgroundColor: withAlpha(tone) } : null]}>
+          <Icon name={icon} size={18} tint={tone ?? color.teal} strokeWidth={2} />
+        </View>
+      )}
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text style={s.rowTitle} numberOfLines={1}>{title}</Text>
+        {!!subtitle && <Text style={s.rowSub} numberOfLines={2}>{subtitle}</Text>}
+      </View>
+      {!!meta && <Text style={s.rowMeta}>{meta}</Text>}
+      {!!onPress && <Icon name="chevron" size={16} tint={color.slate} />}
+    </View>
+  );
+  if (!onPress) return body;
+  return (
+    <Pressable onPress={onPress} style={({ pressed }) => (pressed ? { opacity: 0.6 } : null)}>
+      {body}
+    </Pressable>
+  );
+}
+
+/** A group heading above a card. Sets rhythm without the weight of another card. */
+export function SectionTitle({ children }: { children: ReactNode }) {
+  return <Text style={s.sectionTitle}>{children}</Text>;
+}
+
+/**
+ * The state a screen shows when there is genuinely nothing — which, in a clinic app, is most
+ * screens for most new patients. A muted mark and a plain sentence reads as "nothing here yet"
+ * rather than as a failure.
+ */
+export function Empty({ icon, title, body }: { icon: IconName; title: string; body?: string }) {
+  return (
+    <View style={s.empty}>
+      <View style={s.emptyIcon}>
+        <Icon name={icon} size={26} tint={color.teal} strokeWidth={1.6} />
+      </View>
+      <Text style={s.emptyTitle}>{title}</Text>
+      {!!body && <Text style={s.emptyBody}>{body}</Text>}
+    </View>
+  );
+}
+
+/** 12% tint of a brand colour, for icon chips. */
+function withAlpha(hex: string) {
+  const h = hex.replace('#', '');
+  const n = parseInt(h, 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, 0.12)`;
+}
+
 const s = StyleSheet.create({
+  row: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: space.md },
+  rowDivider: { borderTopWidth: 1, borderTopColor: color.hairline },
+  rowIcon: {
+    width: 36, height: 36, borderRadius: 12,
+    backgroundColor: color.tealSoft, alignItems: 'center', justifyContent: 'center',
+  },
+  rowTitle: { fontSize: 15, fontWeight: '600', color: color.ink },
+  rowSub: { fontSize: 13, color: color.slate, marginTop: 2, lineHeight: 18 },
+  rowMeta: { fontSize: 13, fontWeight: '600', color: color.slate },
+  sectionTitle: {
+    fontSize: 12, fontWeight: '700', color: color.slate,
+    letterSpacing: 0.6, textTransform: 'uppercase',
+    marginTop: space.lg, marginBottom: space.sm,
+  },
+  empty: { alignItems: 'center', paddingVertical: space.xxl, paddingHorizontal: space.xl },
+  emptyIcon: {
+    width: 60, height: 60, borderRadius: 30, backgroundColor: color.tealSoft,
+    alignItems: 'center', justifyContent: 'center', marginBottom: space.md,
+  },
+  emptyTitle: { fontSize: 16, fontWeight: '700', color: color.ink, textAlign: 'center' },
+  emptyBody: { fontSize: 14, color: color.slate, textAlign: 'center', marginTop: space.xs, lineHeight: 20 },
   screen: { flex: 1, backgroundColor: color.mist },
   card: {
     backgroundColor: color.surface,

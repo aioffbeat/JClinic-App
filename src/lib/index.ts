@@ -8,6 +8,7 @@ export * from './device';
 export * from './session';
 export * from './push';
 export * from './query';
+export * from './notification-routing';
 export {
   createNativePlatform,
   hydrateApiStorage,

@@ -4,9 +4,9 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
-import { bootstrapApi, configureNotificationHandler, persistOptions, queryClient } from '@/src/lib';
+import { bootstrapApi, configureNotificationHandler, persistOptions, queryClient, useNotificationRouting } from '@/src/lib';
 import { color, space, type } from '@/src/ui';
-import { PatientSessionProvider, hydratePatientId, useOnUnauthorized } from '@/src/session-context';
+import { PatientSessionProvider, hydratePatientId, useOnUnauthorized, usePatientSession } from '@/src/session-context';
 
 // Must run before the first notification arrives, and it is not React state, so it belongs at
 // module scope rather than in an effect that may not have run yet.
@@ -34,6 +34,10 @@ export default function RootLayout() {
 
 function Boot() {
   const onUnauthorized = useOnUnauthorized();
+  const { signedIn } = usePatientSession();
+  // Only once there is a session: a tap that lands on a patient screen before sign-in would bounce
+  // straight back to login and lose where the patient was trying to go.
+  useNotificationRouting(signedIn);
   const [state, setState] = useState<'loading' | 'ready' | { error: string }>('loading');
 
   useEffect(() => {

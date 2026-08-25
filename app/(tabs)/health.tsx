@@ -1,8 +1,11 @@
 import { useRouter } from 'expo-router';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useQuery } from '@tanstack/react-query';
 import { dmy, portalApi, type PortalVisit } from '@/src/api';
-import { AsOf, Body, Caption, Card, H1, Label, Loading, Notice, Pill, Screen, color, space } from '@/src/ui';
+import {
+  AsOf, Card, Empty, H1, Icon, Loading, Notice, Pill, Row, Screen, SectionTitle,
+  color, space, type IconName,
+} from '@/src/ui';
 
 /**
  * Health — the patient's own clinical record.
@@ -11,10 +14,17 @@ import { AsOf, Body, Caption, Card, H1, Label, Loading, Notice, Pill, Screen, co
  * diagnoses, the SOAP note, the Ayurveda assessment, treatment and diet plans, tests advised, files)
  * and none of that belongs in a list row.
  *
- * The fields here are the real ones: `date`, `diagnoses[]`, and `note` — which is an OBJECT of
- * subjective/objective/assessment/plan, not a string. This screen previously read `visitAt`,
- * `diagnosis` and rendered `note` directly, which would have printed "[object Object]".
+ * Fields are the real ones: `date`, `diagnoses[]`, and `note` — which is an OBJECT of
+ * subjective/objective/assessment/plan, not a string.
  */
+const SHORTCUTS: { label: string; icon: IconName; route: string; tone: string }[] = [
+  { label: 'Lab results', icon: 'droplet', route: '/labs', tone: color.royalBlue },
+  { label: 'Prescriptions', icon: 'file', route: '/prescriptions', tone: color.leafGreen },
+  { label: 'Tests due', icon: 'flask', route: '/due-tests', tone: color.marigold },
+  { label: 'My plan', icon: 'clipboard', route: '/plan', tone: color.plumViolet },
+  { label: 'Daily log', icon: 'heart', route: '/lifestyle', tone: color.coral },
+];
+
 export default function Health() {
   const router = useRouter();
   const history = useQuery({ queryKey: ['portal', 'medical-history'], queryFn: () => portalApi.medicalHistory() });
@@ -24,18 +34,25 @@ export default function Health() {
     <Screen refreshing={history.isRefetching} onRefresh={() => history.refetch()}>
       <H1>Health</H1>
 
-      {/* The record is more than visits. These are separate routes rather than sections because
-          each is a list of its own, and burying labs under a scroll of consultations is how
-          patients end up phoning the clinic to ask for a result they already have. */}
-      <View style={styles.shortcuts}>
-        <Shortcut label="Lab results" onPress={() => router.push('/labs')} />
-        <Shortcut label="Prescriptions" onPress={() => router.push('/prescriptions')} />
-        <Shortcut label="Tests due" onPress={() => router.push('/due-tests')} />
-        <Shortcut label="My plan" onPress={() => router.push('/plan')} />
-        <Shortcut label="Daily log" onPress={() => router.push('/lifestyle')} />
-      </View>
+      {/* Horizontal chips rather than a wrapped block: five destinations in a row keeps the visit
+          list — the thing patients actually came for — above the fold. */}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: space.md }}>
+        <View style={styles.chips}>
+          {SHORTCUTS.map((sc) => (
+            <Pressable
+              key={sc.route}
+              onPress={() => router.push(sc.route as never)}
+              style={({ pressed }) => [styles.chip, pressed && { opacity: 0.7 }]}
+              accessibilityRole="button"
+            >
+              <Icon name={sc.icon} size={17} tint={sc.tone} strokeWidth={2} />
+              <Text style={styles.chipText}>{sc.label}</Text>
+            </Pressable>
+          ))}
+        </View>
+      </ScrollView>
 
-      <Text style={styles.section}>Visits</Text>
+      <SectionTitle>Your visits</SectionTitle>
       {history.isLoading && <Loading />}
 
       {history.isError && !visits.length && (
@@ -47,38 +64,41 @@ export default function Health() {
       )}
 
       {!history.isLoading && !visits.length && !history.isError && (
-        <Notice title="No visits yet" body="Your visit records will appear here after your first consultation." />
+        <Empty
+          icon="clipboard"
+          title="No visits yet"
+          body="Your consultations will appear here once you have seen a doctor."
+        />
       )}
 
       {visits.map((v) => (
-        <Pressable key={v.id} onPress={() => router.push(`/visit/${v.id}`)}>
-          {({ pressed }) => (
-            <Card style={pressed ? { opacity: 0.7 } : undefined}>
-              <View style={styles.head}>
-                <Label>{dmy(v.date)}</Label>
-                {!!v.doctor && <Caption>{v.doctor}</Caption>}
-              </View>
+        <Card key={v.id}>
+          <View style={styles.head}>
+            <Text style={styles.date}>{dmy(v.date)}</Text>
+            {!!v.doctor && <Text style={styles.doctor}>{v.doctor}</Text>}
+          </View>
 
-              {!!v.clinic && <Caption>{v.clinic}</Caption>}
-
-              {!!v.complaints.length && (
-                <Body>{v.complaints.map((c) => c.name).join(', ')}</Body>
-              )}
-
-              {!!v.diagnoses.length && (
-                <View style={styles.pills}>
-                  {v.diagnoses.map((d, i) => (
-                    <Pill key={`${d.description}-${i}`} text={d.description} tone={d.isPrimary ? 'info' : 'neutral'} />
-                  ))}
-                </View>
-              )}
-
-              {!!summarise(v) && <Caption>{summarise(v)}</Caption>}
-
-              <Text style={styles.more}>View full record ›</Text>
-            </Card>
+          {!!v.diagnoses.length && (
+            <View style={styles.pills}>
+              {v.diagnoses.map((d, i) => (
+                <Pill key={`${d.description}-${i}`} text={d.description} tone={d.isPrimary ? 'info' : 'neutral'} />
+              ))}
+            </View>
           )}
-        </Pressable>
+
+          <View style={{ marginTop: space.sm }}>
+            {!!v.complaints.length && (
+              <Row icon="heart" title="Why you came" subtitle={v.complaints.map((c) => c.name).join(', ')} first />
+            )}
+            {!!summarise(v) && <Row icon="clipboard" title="The plan" subtitle={summarise(v)!} first={!v.complaints.length} />}
+            <Row
+              icon="file"
+              title="Full record"
+              subtitle="Vitals, diagnosis, notes, diet and treatment plan"
+              onPress={() => router.push(`/visit/${v.id}` as never)}
+            />
+          </View>
+        </Card>
       ))}
 
       <AsOf at={history.dataUpdatedAt || null} />
@@ -87,7 +107,7 @@ export default function Health() {
 }
 
 /**
- * A one-line preview for the list row.
+ * A one-line preview.
  *
  * The plan the doctor wrote is the most useful single line — what happens next. Falls back to the
  * assessment. Deliberately never the subjective note, which is the patient's own words read back
@@ -100,32 +120,22 @@ function summarise(v: PortalVisit): string | null {
   return flat.length > 120 ? `${flat.slice(0, 119)}…` : flat;
 }
 
-function Shortcut({ label, onPress }: { label: string; onPress: () => void }) {
-  return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [styles.shortcut, pressed && { opacity: 0.7 }]}
-      accessibilityRole="button"
-    >
-      <Text style={styles.shortcutText}>{label}</Text>
-    </Pressable>
-  );
-}
-
 const styles = StyleSheet.create({
-  shortcuts: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginBottom: space.lg },
-  shortcut: {
+  chips: { flexDirection: 'row', gap: space.sm },
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
     minHeight: 44,
-    justifyContent: 'center',
     paddingHorizontal: space.lg,
     borderRadius: 999,
-    borderWidth: 1,
-    borderColor: color.teal,
     backgroundColor: color.surface,
+    borderWidth: 1,
+    borderColor: color.hairline,
   },
-  shortcutText: { fontSize: 14, fontWeight: '600', color: color.teal },
-  section: { fontSize: 13, fontWeight: '700', color: color.slate, marginBottom: space.sm },
+  chipText: { fontSize: 13.5, fontWeight: '600', color: color.ink },
   head: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: space.sm },
+  date: { fontSize: 16, fontWeight: '700', color: color.petrolInk },
+  doctor: { fontSize: 13, color: color.slate },
   pills: { flexDirection: 'row', flexWrap: 'wrap', gap: space.xs, marginTop: space.sm },
-  more: { fontSize: 13, fontWeight: '600', color: color.teal, marginTop: space.md },
 });
