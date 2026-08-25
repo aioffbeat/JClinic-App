@@ -36,6 +36,17 @@
         "ORG_GRADLE_PROJECT_reactNativeArchitectures": "arm64-v8a"
       }
     },
+    "preview-altid": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_BASE": "https://clinic.drjoshis.in",
+        "ORG_GRADLE_PROJECT_reactNativeArchitectures": "arm64-v8a",
+        "JCLINIC_PACKAGE_SUFFIX": ".dev"
+      }
+    },
     "preview-local": {
       "distribution": "internal",
       "android": {

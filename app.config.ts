@@ -3,14 +3,18 @@ import type { ExpoConfig } from 'expo/config';
 /**
  * The patient app.
  *
- * A separate binary from the staff app, not a role switch inside one. Patients must never see a
- * staff login, the two need different permission manifests (staff asks for the phone dialer for
- * Ozonetel click-to-call; a patient app asking for that would be rejected and rightly so), and
- * Apple reviews a consumer health app very differently from an internal clinical tool. A rejection
- * of one must not block the other.
+ * Patients only — there is no staff mode. A clinic-facing app briefly shared this repo and was
+ * removed; it lives on the two-app-archive branch.
  */
+/**
+ * Diagnostic escape hatch: JCLINIC_PACKAGE_SUFFIX changes the applicationId so a build cannot
+ * collide with anything already installed under the real package name. Unset in every normal
+ * build, so the shipped identity is untouched.
+ */
+const SUFFIX = process.env.JCLINIC_PACKAGE_SUFFIX ?? '';
+
 const config: ExpoConfig = {
-  name: "Dr. Joshi's",
+  name: SUFFIX ? `Dr. Joshi's${SUFFIX}` : "Dr. Joshi's",
   slug: 'jclinic-patient',
   version: '0.1.0',
   orientation: 'portrait',
@@ -21,7 +25,7 @@ const config: ExpoConfig = {
 
 
   ios: {
-    bundleIdentifier: 'in.drjoshis.jclinic.patient',
+    bundleIdentifier: `in.drjoshis.jclinic.patient${SUFFIX}`,
     supportsTablet: false,
     infoPlist: {
       // Every string here is shown verbatim in the OS permission dialog, and App Review reads them.
@@ -36,7 +40,7 @@ const config: ExpoConfig = {
   },
 
   android: {
-    package: 'in.drjoshis.jclinic.patient',
+    package: `in.drjoshis.jclinic.patient${SUFFIX}`,
     adaptiveIcon: { backgroundColor: '#F2F7F6' },
     // Deliberately minimal. CAMERA is requested by expo-image-picker at the point of use; nothing
     // here asks for contacts, location or storage, and nothing should — Play's Data safety form
