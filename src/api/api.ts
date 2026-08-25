@@ -2513,6 +2513,19 @@ export interface OverdueReturn {
 }
 
 export const analyticsApi = {
+  /**
+   * The department packs' NEW metrics. Everything else on those screens is fetched from the
+   * endpoint that already computes it, so a pack can never become a second opinion.
+   */
+  deptTelecallerDaily: (f: AnalyticsFilter = {}) => api<any>(`/analytics/dept/telecaller-daily${q(f as any)}`),
+  deptFollowupPunctuality: (f: AnalyticsFilter = {}) => api<any>(`/analytics/dept/followup-punctuality${q(f as any)}`),
+  deptReferrals: (f: AnalyticsFilter = {}) => api<any>(`/analytics/dept/referrals${q(f as any)}`),
+  deptVisitsByDisease: (f: AnalyticsFilter = {}) => api<any>(`/analytics/dept/visits-by-disease${q(f as any)}`),
+  deptVisitedNotMedicated: (f: AnalyticsFilter = {}) => api<any>(`/analytics/dept/visited-not-medicated${q(f as any)}`),
+  deptPhysiology: (f: AnalyticsFilter & { code?: string } = {}) => api<any>(`/analytics/dept/physiology${q(f as any)}`),
+  deptFirstMonthBilling: (f: AnalyticsFilter = {}) => api<any>(`/analytics/dept/first-month-billing${q(f as any)}`),
+  deptRevenueByDisease: (f: AnalyticsFilter = {}) => api<any>(`/analytics/dept/revenue-by-disease${q(f as any)}`),
+  deptInventoryExtras: () => api<any>('/analytics/dept/inventory-extras'),
   /** Patients who were due back and have not visited — consolidated, by clinic, doctor and disease. */
   overdueReturn: (f: { clinicId?: string; kind?: string } = {}) =>
     api<OverdueReturn>(`/analytics/overdue-return${q(f as any)}`),
