@@ -22,6 +22,7 @@ const config: ExpoConfig = {
   // rather than the home screen.
   scheme: 'drjoshis',
   userInterfaceStyle: 'light',
+  icon: './assets/icon.png',
 
 
   ios: {
@@ -41,7 +42,7 @@ const config: ExpoConfig = {
 
   android: {
     package: `in.drjoshis.jclinic.patient${SUFFIX}`,
-    adaptiveIcon: { backgroundColor: '#F2F7F6' },
+    adaptiveIcon: { foregroundImage: './assets/adaptive-icon.png', backgroundColor: '#1b3a8f' },
     // Deliberately minimal. CAMERA is requested by expo-image-picker at the point of use; nothing
     // here asks for contacts, location or storage, and nothing should — Play's Data safety form
     // has to be answered for every permission listed.
@@ -50,6 +51,16 @@ const config: ExpoConfig = {
 
   plugins: [
     'expo-router',
+    /**
+     * Splash art now exists, so the plugin can be configured again. It was removed earlier because
+     * setting a backgroundColor with no image made it emit a reference to a splashscreen_logo
+     * drawable it never generated, and Android resource linking failed the release build on the
+     * dangling reference. Colour and image go back together, never one without the other.
+     */
+    [
+      'expo-splash-screen',
+      { image: './assets/splash.png', imageWidth: 200, resizeMode: 'contain', backgroundColor: '#F2F7F6' },
+    ],
 
     'expo-secure-store',
     [

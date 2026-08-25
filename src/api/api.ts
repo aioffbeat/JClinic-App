@@ -1625,12 +1625,37 @@ export interface LeadCall {
   id: string; leadId?: string | null; direction: string; provider: string; status: string; disposition?: string | null;
   durationSec?: number | null; talkTimeSec?: number | null; hasRecording: boolean; agent?: string | null; startedAt: string;
 }
+/** An existing patient who rang in and is waiting for a clinic to call them back. */
+export interface PatientCallbackRow {
+  id: string; leadId: string; patientId: string; clinicId: string;
+  clinic: string | null;
+  name: string; phone: string;
+  requestedAt: string; dueAt: string | null; note: string | null;
+  assignedTo: string | null; resolvedAt: string | null; escalatedAt: string | null;
+  /** Names, not uuids — whoever picks this up must see who put it on them without asking around. */
+  assignedToName: string | null; requestedByName: string | null;
+  resolvedByName: string | null; resolvedNote: string | null;
+  /** Derived server-side from dueAt, never stored — editing the SLA rule re-answers it. */
+  breached: boolean;
+}
+
+/** The hand-over as the lead card shows it: which clinic was asked, by whom, and by when. */
+export interface LeadPatientCallback {
+  id: string; clinicId: string; clinic: string | null;
+  requestedAt: string; requestedByName: string | null;
+  assignedTo: string | null; assignedToName: string | null;
+  dueAt: string | null; note: string | null;
+  resolvedAt: string | null; resolvedByName: string | null; resolvedNote: string | null;
+  escalatedAt: string | null; breached: boolean;
+}
+
 export interface LeadDetail extends LeadRow {
   ownerId?: string | null; lostReason?: string | null;
   area?: string | null; diseaseInterest?: string | null; gender?: string | null; age?: number | null;
   externalRef?: string | null; utm?: Record<string, string> | null;
   activities: LeadActivityRow[];
   calls?: LeadCall[];
+  patientCallbacks?: LeadPatientCallback[];
 }
 // ---- staff notification bell ----
 export interface StaffNotification {
@@ -1660,6 +1685,8 @@ export function setLeadWorkLevel(l: number | null) { leadWorkLevel = l; }
 export const leadsApi = {
   list: (qs = '') => api<LeadRow[]>(`/leads${qs}`),
   funnel: () => api<LeadFunnel>('/leads/funnel'),
+  /** Last-call outcomes present in the caller's leads, commonest first, with a count each. */
+  callOutcomes: () => api<{ value: string; count: number }[]>('/leads/call-outcomes'),
   get: (id: string) => api<LeadDetail>(`/leads/${id}`),
   create: (data: unknown) => api<LeadCreateResult>('/leads', { method: 'POST', body: JSON.stringify(data) }),
   update: (id: string, data: unknown) => api(`/leads/${id}`, { method: 'PATCH', body: JSON.stringify({ asLevel: leadWorkLevel ?? undefined, ...(data as object) }) }),
@@ -1687,6 +1714,16 @@ export const leadsApi = {
   /** The telecaller's hand-over: send a qualified lead to its clinic. */
   routeClinic: (id: string, data: { clinicId: string; note?: string }) =>
     api<LeadRow & { owner?: string | null; via?: string }>(`/leads/${id}/route-clinic`, { method: 'POST', body: JSON.stringify(data) }),
+  /**
+   * The caller is already a patient and wants this clinic to ring them back. Not a qualification:
+   * the lead does not move through the desk, the clinic is simply told, on a 30-minute clock.
+   */
+  patientCallback: (id: string, data: { clinicId: string; patientId?: string; note?: string }) =>
+    api<{ id: string; clinic: string; patientName: string; dueAt: string | null }>(`/leads/${id}/patient-callback`, { method: 'POST', body: JSON.stringify(data) }),
+  resolvePatientCallback: (cbId: string, note?: string) =>
+    api<PatientCallbackRow>(`/leads/patient-callbacks/${cbId}/resolve`, { method: 'POST', body: JSON.stringify({ note }) }),
+  patientCallbacks: (includeResolved?: boolean) =>
+    api<PatientCallbackRow[]>('/leads/patient-callbacks' + (includeResolved ? '?includeResolved=true' : '')),
   /** Active clinics for the Send-to-clinic dropdown. */
   routeTargets: () => api<{ id: string; code: string; name: string }[]>('/leads/route-targets'),
   journey: (from?: string, to?: string) =>
@@ -1897,17 +1934,26 @@ export const telephonyApi = {
    * bearer-authenticated and the provider's expiring MP3 URL must never reach the browser.
    * Caller is responsible for URL.revokeObjectURL when done.
    */
-  recording: async (callId: string): Promise<string> => {
-    const headers: Record<string, string> = {};
-    const token = getToken();
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-    const clinic = getClinic();
-    if (clinic) headers['X-Clinic-Id'] = clinic;
-    const res = await fetch(`${P().baseUrl}/v1/telephony/calls/${callId}/recording`, { headers });
-    if (!res.ok) throw new ApiError(res.status, await res.json().catch(() => null));
-    return P().blobUrl(await res.blob());
+  recording: async (callId: string): Promise<string> => P().blobUrl(await fetchRecording(callId)),
+  /** The same bytes, saved to the user's device. Same authenticated fetch — a call recording can
+   *  never be a plain <a href> because the request needs an Authorization header and the
+   *  provider's expiring MP3 URL must not reach the browser. */
+  downloadRecording: async (callId: string, filename: string): Promise<void> => {
+    await P().saveBlob(await fetchRecording(callId), filename);
   },
 };
+
+/** One authenticated GET of a recording's bytes, shared by play and download. */
+async function fetchRecording(callId: string): Promise<Blob> {
+  const headers: Record<string, string> = {};
+  const token = getToken();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const clinic = getClinic();
+  if (clinic) headers['X-Clinic-Id'] = clinic;
+  const res = await fetch(`${P().baseUrl}/v1/telephony/calls/${callId}/recording`, { headers });
+  if (!res.ok) throw new ApiError(res.status, await res.json().catch(() => null));
+  return res.blob();
+}
 
 // ---- CRM telecalling pods ----
 export interface PodAgent {
@@ -2389,8 +2435,10 @@ export type AnalyticsFilter = { from?: string; to?: string; granularity?: string
 /** One clinic's line in the side-by-side comparison. */
 export interface ClinicCompareRow {
   clinicId: string; code: string; name: string;
-  gross: number; collected: number; writtenOff: number; discount: number;
-  outstanding: number; bills: number; avgBillValue: number; collectionRate: number;
+  gross: number; writtenOff: number; discount: number;
+  /** Billed value MARKED PAID — not cash banked. The Collections tab answers the cash question. */
+  billedPaid: number;
+  outstanding: number; bills: number; avgBillValue: number; billedSettledRate: number;
   footfall: number; uniquePatients: number; newPatients: number;
 }
 export interface ClinicCompare {
@@ -2444,7 +2492,30 @@ export const patientTrackerApi = {
   // The tracker is read-only: note / remove / restore were removed with their routes (19 Aug 2026).
 };
 
+/** A cut of the overdue-to-return report: one row per clinic / doctor / disease / track. */
+export interface OverdueCut {
+  key: string; label: string; patients: number; avgDaysLate: number; worstDaysLate: number;
+}
+export interface OverdueReturnRow {
+  patientId: string; name: string; phone: string | null;
+  clinicId: string; clinic: string;
+  track: string; dueAt: string; daysLate: number; attempts: number;
+  doctor: string | null; disease: string | null; stage: number | null; lastVisit: string | null;
+}
+/** Patients who were due back and have not visited. */
+export interface OverdueReturn {
+  asOf: string;
+  total: { patients: number; avgDaysLate: number; worstDaysLate: number; neverVisited: number };
+  byClinic: OverdueCut[]; byDoctor: OverdueCut[]; byDisease: OverdueCut[]; byTrack: OverdueCut[];
+  patients: OverdueReturnRow[];
+  /** How much of the doctor / disease cut is attributable at all — printed, not hidden. */
+  coverage: { withDoctor: number; withDisease: number; of: number };
+}
+
 export const analyticsApi = {
+  /** Patients who were due back and have not visited — consolidated, by clinic, doctor and disease. */
+  overdueReturn: (f: { clinicId?: string; kind?: string } = {}) =>
+    api<OverdueReturn>(`/analytics/overdue-return${q(f as any)}`),
   /**
    * Every clinic, always — unlike every other analytics call this one ignores the clinic picker,
    * because the whole point is the chain-wide view. See the endpoint comment for why.

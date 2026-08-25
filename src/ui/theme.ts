@@ -15,6 +15,8 @@ export const color = {
   teal: '#119DA4',
   /** Gradient end, highlights, pressed states. */
   tealBright: '#16B5AE',
+  /** Teal tint — chips, active backgrounds, selected rows. `--brand-soft` on the web. */
+  tealSoft: '#E2F3F3',
 
   // --- specialty accents (also the chart series palette) ---
   leafGreen: '#3FA34D',
@@ -38,6 +40,29 @@ export const color = {
   /** Soft coral-red, deliberately not a harsh alarm red. */
   danger: '#D75A54',
   info: '#2D6CDF',
+} as const;
+
+/**
+ * The gradients the web portal is actually built from.
+ *
+ * Taken from styles.css rather than BRAND.md, which documents the primary button as teal → teal
+ * (#119DA4 → #16B5AE). The shipped UI does not use that: every surface a patient sees runs teal →
+ * BLUE, and the portal hero is a three-stop radial that lands on a deep navy. Matching the file
+ * the web actually renders is what makes the app look like the same product.
+ */
+export const gradient = {
+  /** The portal hero. Radial on the web; expressed here as its three stops, corner to corner. */
+  hero: ['#16B5AE', '#2D6CDF', '#1b3a8f'] as const,
+  /** Primary actions — `--brand-grad`. */
+  brand: ['#119DA4', '#2D6CDF'] as const,
+  /** The dashboard tiles, in the order the portal uses them. */
+  tile: {
+    blue: ['#2D6CDF', '#16B5AE'] as const,   // grad-1
+    green: ['#3FA34D', '#16B5AE'] as const,  // grad-2
+    violet: ['#7C4DBC', '#2D6CDF'] as const, // grad-3
+    deep: ['#0e7490', '#2D6CDF'] as const,   // grad-4
+    warm: ['#E0A93B', '#E2725B'] as const,   // grad-5
+  },
 } as const;
 
 /**
@@ -81,6 +106,10 @@ export const radius = {
   control: 10,
   /** Cards. */
   card: 16,
+  /** The hero panel — deliberately rounder than a card, as on the web. */
+  hero: 22,
+  /** Dashboard tiles. */
+  tile: 18,
   /** Pills and chips. */
   pill: 999,
 } as const;
@@ -100,6 +129,14 @@ export const shadow = {
     shadowRadius: 14,
     shadowOffset: { width: 0, height: 6 },
     elevation: 3,
+  },
+  /** Coloured surfaces carry a deeper, further-thrown shadow so they lift off the page. */
+  tile: {
+    shadowColor: '#10243A', // rgba(16,36,58) — the web's tile shadow colour
+    shadowOpacity: 0.4,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 8,
   },
 } as const;
 
@@ -129,5 +166,5 @@ export const type = {
 export const HIT_SLOP = { top: 8, bottom: 8, left: 8, right: 8 } as const;
 export const MIN_TOUCH = 44;
 
-export const theme = { color, series, flag, space, radius, shadow, type, MIN_TOUCH, HIT_SLOP } as const;
+export const theme = { color, gradient, series, flag, space, radius, shadow, type, MIN_TOUCH, HIT_SLOP } as const;
 export type Theme = typeof theme;

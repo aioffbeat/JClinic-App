@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { KeyboardAvoidingView, Platform, StyleSheet, TextInput, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ApiError } from '@/src/api';
-import { Body, Button, Caption, Card, H1, Notice, color, space } from '@/src/ui';
+import { Body, BrandLockup, Button, Caption, Card, Notice, color, space } from '@/src/ui';
 import { usePatientSession } from '../src/session-context';
 
 /**
@@ -66,7 +66,7 @@ export default function Login() {
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.wrap}>
       <View style={styles.inner}>
-        <H1>Dr. Joshi&apos;s</H1>
+        <BrandLockup style={{ marginBottom: space.xl }} />
         <Body muted>
           {step === 'phone'
             ? 'Sign in with your registered mobile number.'
