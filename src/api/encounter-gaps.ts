@@ -56,12 +56,28 @@ export const STRICT_REQUIRED_V2: GapKey[] = [
 ];
 export const STRICT_V2_FROM = new Date('2026-08-14T12:45:00+05:30');
 
+/** Mirrors DIET_RX_LOCK_FROM. From this minute the SERVER also refuses a Diet or Prescription
+ *  write on an open V2 visit whose other sections are unfilled — until now the tab lock was a
+ *  navigation rail only. Visits opened earlier keep the rail without the wall. */
+export const DIET_RX_LOCK_FROM = new Date('2026-08-29T09:00:00+05:30');
+
 export const isStrict = (startedAt: string | null | undefined): boolean =>
   !!startedAt && new Date(startedAt) >= STRICT_FROM;
 export const isStrictV2 = (startedAt: string | null | undefined): boolean =>
   !!startedAt && new Date(startedAt) >= STRICT_V2_FROM;
 
-export const requiredFor = (type: string | null | undefined, startedAt?: string | null): GapKey[] => {
+/** Mirrors FOLLOW_UP_REQUIRED — the two sections a return visit inside the window must carry.
+ *  The API constant is authoritative and the two move together. */
+export const FOLLOW_UP_REQUIRED: GapKey[] = ['note', 'prescription'];
+
+export const requiredFor = (
+  type: string | null | undefined,
+  startedAt?: string | null,
+  isFollowUp = false,
+): GapKey[] => {
+  // First, for the same reason the API states: a follow-up is created after both cutovers by
+  // definition, so any other order makes this branch unreachable.
+  if (isFollowUp) return FOLLOW_UP_REQUIRED;
   if (isStrictV2(startedAt)) return STRICT_REQUIRED_V2;
   if (isStrict(startedAt)) return STRICT_REQUIRED;
   return REQUIRED_BY_TYPE[(type ?? 'op_consult').trim()] ?? REQUIRED_BY_TYPE.op_consult;
@@ -135,12 +151,14 @@ export interface LiveState {
     adviseExercise: boolean; exerciseCount: number;
     advisePanchkarma: boolean; panchkarmaCount: number;
   } | null;
+  /** Set when this visit continues an earlier one — it selects the required list. */
+  followUpOfId?: string | null;
 }
 
 const filled = (v: string | null | undefined) => (v ?? '').trim().length >= 2;
 
 export function liveGaps(s: LiveState): GapKey[] {
-  const req = requiredFor(s.type, s.startedAt);
+  const req = requiredFor(s.type, s.startedAt, !!s.followUpOfId);
   const v2 = req === STRICT_REQUIRED_V2;
   const gaps: GapKey[] = [];
   const need = (k: GapKey, ok: boolean) => { if (req.includes(k) && !ok) gaps.push(k); };

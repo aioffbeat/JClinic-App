@@ -415,6 +415,30 @@ export interface PatientStats {
 }
 
 export const patientsApi = {
+  /**
+   * Everything on file for a patient — clinical attachments and Path-lab scans in one list,
+   * newest first. Merged server-side so one sort order applies to both and neither store's
+   * URL-signing scheme leaks into the browser.
+   */
+  files: (id: string) => api<PatientFile[]>(`/patients/${id}/files`),
+  /**
+   * File a document against the PATIENT, with no visit — a report handed in at the desk.
+   * The path must stay exactly `/patients/:id/attachments`: nginx grants the 110 MB body limit
+   * only to `^/v1/(encounters|patients)/<uuid>/attachments$` and nothing else.
+   */
+  uploadFile: (
+    id: string,
+    file: File,
+    meta: { category: string; caption?: string; takenAt?: string },
+    onProgress?: (pct: number) => void,
+  ) => {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('category', meta.category);
+    if (meta.caption) form.append('caption', meta.caption);
+    if (meta.takenAt) form.append('takenAt', meta.takenAt);
+    return apiUploadProgress<Attachment>(`/patients/${id}/attachments`, form, onProgress);
+  },
   search: (q: string, limit?: number) =>
     api<PatientListItem[]>(`/patients?q=${encodeURIComponent(q)}${limit ? `&limit=${limit}` : ''}`),
   /**
@@ -616,6 +640,7 @@ export interface EncounterDetail {
   endedReason?: string | null;
   endedNote?: string | null;
   clonedFromId?: string | null;
+  followUpOfId?: string | null;
   /** "Save for later": when and on which Encounter tab the doctor paused this open visit. */
   parkedAt?: string | null;
   parkedTab?: string | null;
@@ -701,6 +726,16 @@ export interface Attachment {
   url: string;
 }
 
+/**
+ * One row of the patient's Files tab. A superset of Attachment, because the tab merges two stores:
+ * clinical attachments filed against visits, and Path-lab scans. `source` says which, and `status`
+ * is only ever set on a lab row (processing | review | approved | rejected | failed).
+ */
+export interface PatientFile extends Attachment {
+  source: 'clinical' | 'lab';
+  status: string | null;
+}
+
 export interface AttachmentList {
   visit: Attachment[];
   /** The same patient's files from other visits — what makes a progress photo comparable. */
@@ -725,15 +760,31 @@ export interface AmendmentSummary { count: number; lastAt: string | null; lastBy
  * `encounterId` with no back-relation on Encounter — they have to be fetched by hand server-side,
  * and a "complete record" that omitted them would look complete while hiding a lab order.
  */
+export interface FollowUpOnVisit {
+  id: string; startedAt: string; endedAt: string | null;
+  practitioner: { fullName: string } | null;
+  clinic: { code: string } | null;
+  note: { body: unknown } | null;
+  prescriptions: { signedAt: string | null; items: {
+    id: string; dose: string | null; frequency: string | null; durationDays: number | null;
+    instructions: string | null; createdAt: string; drugText: string | null;
+    medicine: { name: string } | null;
+  }[] }[];
+}
+
 export interface VisitRecord {
   id: string;
   startedAt: string;
+  /** Visits added to this one afterwards, and the visit this one continues if it is itself one. */
+  followUps?: FollowUpOnVisit[];
+  followUpOf?: { id: string; startedAt: string; practitioner: { fullName: string } | null } | null;
   endedAt: string | null;
   endedReason: string | null;
   endedNote: string | null;
   endedByName: string | null;
   type: string | null;
   clonedFromId: string | null;
+  followUpOfId: string | null;
   gaps: string[];
   amendment: AmendmentSummary;
   clinic: { code: string; name: string };
@@ -767,6 +818,9 @@ export interface VisitListItem {
   endedReason: string | null;
   type: string | null;
   clonedFromId: string | null;
+  followUpOfId: string | null;
+  /** Decided on the server — the client must never re-derive the window. */
+  canFollowUp?: boolean;
   parkedAt?: string | null;
   parkedTab?: string | null;
   parkedNote?: string | null;
@@ -802,6 +856,38 @@ export interface PreviousValues {
 export const emrApi = {
   create: (data: unknown) => api<{ id: string }>('/encounters', { method: 'POST', body: JSON.stringify(data) }),
   cloneLast: (patientId: string) => api<{ id: string; clonedFrom: string | null }>('/encounters/clone-last', { method: 'POST', body: JSON.stringify({ patientId }) }),
+  followUp: (id: string) => api<{ id: string; followUpOf: string; windowDays: number }>(`/encounters/${id}/follow-up`, { method: 'POST' }),
+
+  /**
+   * START A VISIT — the only way any screen should.
+   *
+   * The server refuses a second encounter inside the follow-up window (owner, 31 Aug 2026: "an
+   * encounter should only be once in a 30 day window, no duplication") and names the visit to add
+   * to instead. Three buttons open visits — the patient hub, the doctor workspace, and registration
+   * — so the handling lives here once rather than three times, or they drift and one of them starts
+   * opening rivals again.
+   *
+   * Returns where to navigate, and whether it turned out to be a follow-up so the page can say so.
+   */
+  startVisit: async (
+    patientId: string,
+    opts: { force?: boolean; appointmentId?: string } = {},
+  ): Promise<{ id: string; followUpOf: string | null }> => {
+    try {
+      const e = await emrApi.create({
+        patientId,
+        ...(opts.appointmentId ? { appointmentId: opts.appointmentId } : {}),
+        ...(opts.force ? { force: true } : {}),
+      });
+      return { id: e.id, followUpOf: null };
+    } catch (err: any) {
+      if (err?.body?.code === 'follow_up_available' && err.body.followUpOf) {
+        const f = await emrApi.followUp(err.body.followUpOf);
+        return { id: f.id, followUpOf: err.body.followUpOf as string };
+      }
+      throw err;
+    }
+  },
   /** Every visit the caller can read, newest first — chain-wide across their clinics. */
   listByPatient: (patientId: string) => api<VisitListItem[]>(`/encounters?patientId=${patientId}`),
   get: (id: string) => api<EncounterDetail>(`/encounters/${id}`),
@@ -889,6 +975,7 @@ export interface IncompleteEncounter {
   id: string;
   startedAt: string;
   type: string | null;
+  clinic?: string | null;
   parkedAt?: string | null;
   parkedTab?: string | null;
   parkedNote?: string | null;
@@ -897,6 +984,8 @@ export interface IncompleteEncounter {
   practitionerId: string;
   practitioner: string;
   gaps: string[];
+  /** Fully documented, never concluded — one click, not a form. Sorted to the top of the list. */
+  readyToComplete?: boolean;
 }
 export interface GenerateDietChartInput {
   weightKg: number; heightCm: number; activity?: string; ageYears?: number; sex?: string;
@@ -1401,7 +1490,23 @@ export interface BillableMedicine { id: string; name: string; type?: string | nu
 export interface BillableService { id: string; name: string; type?: string | null; price: number; gstRate: number }
 export interface BillCatalog { medicines: BillableMedicine[]; services: BillableService[] }
 export interface BillableLine { sourceType: string; sourceId?: string; description: string; qty: number; unitPrice: number; gstRate: number; hsnSac?: string | null }
-export interface Billables { services: BillableLine[]; prescriptionItems: BillableLine[] }
+/**
+ * `clinical` is the prescription-required gate's answer for THIS patient, computed before the
+ * operator has added a line. `ok` false means a bill of anything but consultation will be refused.
+ */
+export interface Billables {
+  services: BillableLine[];
+  prescriptionItems: BillableLine[];
+  clinical?: {
+    enforced: boolean;
+    ok: boolean;
+    windowDays: number;
+    lastPrescriptionAt: string | null;
+    lastPrescriber: string | null;
+  };
+  /** The 25% rule, so the counter can stop a discount being typed rather than refuse it at Save. */
+  discountCeiling?: { enforced: boolean; maxPct: number };
+}
 
 /** A row of the Deleted bills register — read from bill_archive, where voided bills are stored separately. */
 export interface VoidedBill {
@@ -1514,6 +1619,13 @@ export const billingApi = {
   /** No-negative-stock billing block, per clinic. Off by default; a clinic's first signed monthly
    *  audit turns it on automatically — this is the read + admin manual override. */
   inventoryBlock: () => api<{ clinicId: string; enforce: boolean }>('/bills/rules/inventory-block'),
+  /** Prescription-required billing, per clinic. Ships off — see prescription-gate.ts. */
+  rxGate: () => api<{ clinicId: string; enforce: boolean; windowDays: number }>('/bills/rules/prescription-required'),
+  setRxGate: (body: { enforce?: boolean; windowDays?: number }) =>
+    api<{ clinicId: string; enforce: boolean; windowDays: number }>('/bills/rules/prescription-required', { method: 'PUT', body: JSON.stringify(body) }),
+  discountCeiling: () => api<DiscountCeiling>('/bills/rules/discount-ceiling'),
+  setDiscountCeiling: (body: { enforce?: boolean; maxPct?: number }) =>
+    api<DiscountCeiling>('/bills/rules/discount-ceiling', { method: 'PUT', body: JSON.stringify(body) }),
   setInventoryBlock: (enforce: boolean) => api<{ clinicId: string; enforce: boolean }>('/bills/rules/inventory-block', { method: 'PUT', body: JSON.stringify({ enforce }) }),
 };
 
@@ -1745,19 +1857,25 @@ export const leadsApi = {
 // ---- Lead journey: the accountability report (BI CRM tab + the Leads-page strip) ----
 export interface JourneyStrip { inTriage: number; unassigned: number; neverCalled: number; routedToday: number; firstCallHours: number }
 export interface JourneyDay {
-  date: string; arrived: number; calledWithin: number; calledLater: number; neverCalled: number;
+  date: string; arrived: number; calledWithin: number; calledLater: number;
+  notDialled: number; worked: number; newLeads: number; neverCalled: number; closedUnworked: number;
   routed: number; converted: number; junked: number;
   channels: Record<string, number>; deliveriesLost: number;
 }
 export interface LeadJourney {
   from: string; to: string; firstCallHours: number; teamView: boolean;
-  totals: { arrived: number; calledWithin: number; calledLater: number; neverCalled: number; routed: number; converted: number; junked: number };
+  clamped?: boolean; maxRangeDays?: number;
+  totals: { arrived: number; calledWithin: number; calledLater: number; notDialled: number;
+    worked: number; newLeads: number; neverCalled: number; closedUnworked: number; routed: number; converted: number; junked: number };
   days: JourneyDay[];
   triage: { withTelecaller: number; unassigned: number; aging: { under24h: number; d1to3: number; over3d: number } };
   routing: { byClinic: { clinic: string; routed: number; within4h: number; within24h: number; within3d: number; over3d: number }[] };
   telecallers: { id: string; name: string; inTriageNow: number; firstCalls: number; routed: number }[];
-  clinics: { clinic: string; received: number; worked: number; converted: number }[];
-  neverCalled: { id: string; fullName: string; phone: string; owner: string | null; ownerId: string | null; ageDays: number; routed: boolean }[];
+  clinics: { clinic: string; received: number; worked: number; newLeads: number; converted: number }[];
+  newLeads: { id: string; fullName: string; phone: string; owner: string | null; ownerId: string | null;
+    ageDays: number; routed: boolean; openReason: 'never_called' | 'never_reached' | 'under_the_bar';
+    attempts: number; connectedCalls: number; bestTalkSec: number }[];
+  newTotal: number;
 }
 export const leadCallsApi = {
   get: (id: string) => api<LeadCall>(`/lead-calls/${id}`),
@@ -1899,6 +2017,8 @@ export interface CallSummary {
   totalTalkTimeSec: number; avgTalkTimeSec: number; failed: number;
   /** Dials the provider refused outright (no UCID) — hidden unless includeFailedDials is set. */
   neverDialled: number;
+  /** Set only when one agent is selected: their whole day across every branch (Ozonetel's figure). */
+  chainWide?: { attempts: number; connected: number } | null;
   lastAttemptAt: string | null; lastConnectedAt: string | null;
 }
 export interface CallLog { total: number; calls: CallRow[]; summary: CallSummary }
@@ -2112,6 +2232,7 @@ export interface ProtocolAllowance {
   usable: boolean;
   blockedReasons: { code: string; message: string; status: number }[];
   minUpfrontPct: number; upfrontDue: number; payByDate: string;
+  /** Rung 2 of the payment ladder — fixed policy, so the counter can see it coming. */
 }
 export interface CustomProtocolConfig {
   approverRoles: string[]; maxDiscountPct: number; minMonths: number; maxMonths: number;
@@ -2296,7 +2417,31 @@ export interface DueTask {
 }
 export type FollowupStatus = 'pending' | 'calling' | 'not_received' | 'completed';
 export interface FollowupPlanRow { id: string; patientId: string; cycle: number; maxCycles: number; nextDue?: string | null; state: string; createdAt: string; patient?: { fullName: string } }
-export interface Approval { id: string; kind: string; entityId: string; approverRole: string; note?: string | null; state: string; payload?: any; createdAt?: string }
+/** One line of a bill under approval — enough to judge the ask, not a full BillLine. */
+export interface ApprovalBillLine {
+  description: string; sourceType: string;
+  qty: number; unitPrice: number; discount: number; covered: number; amount: number;
+}
+/** The bill an approval is about. Null when the approval does not point at one (a follow-up stop,
+ *  a custom protocol) or when the bill has since been deleted — the row still renders. */
+export interface ApprovalBill {
+  id: string; number: string; createdAt: string;
+  patientId: string; patientName: string; patientPhone: string | null;
+  raisedBy: string | null;
+  gross: number; discountTotal: number; discountPct: number; discountApproval: string;
+  coveredTotal: number; writeOffAmount: number;
+  total: number; collected: number; outstanding: number; payState: string;
+  lines: ApprovalBillLine[];
+}
+export interface Approval {
+  id: string; kind: string; entityId: string; approverRole: string;
+  note?: string | null; state: string; payload?: any; createdAt?: string;
+  requestedByName?: string | null;
+  bill?: ApprovalBill | null;
+}
+
+/** `hardMax` is the rule itself (25) — a clinic may set maxPct lower, never higher. */
+export interface DiscountCeiling { clinicId: string; enforce: boolean; maxPct: number; hardMax: number }
 
 export const followupApi = {
   dueTasks: () => api<DueTask[]>('/followup-tasks'),
@@ -2467,7 +2612,15 @@ export interface TrackerRow {
   months: Record<string, number>;
   /** '2026-08-01' → the hand-typed cell ("stop", "have medicine"). */
   notes: Record<string, string>;
+  /** '2026-08-01' → how the value reached the patient that month. Drives the cell colour. */
+  modes: Record<string, { amount: number; dispensed: number; fullDiscount: number; protocolCovered: number }>;
   total: number;
+  /** List value that left the shelf in the window, whatever the patient was charged. */
+  dispensed: number;
+  /** Of that, given away as a 100% discount. */
+  fullDiscount: number;
+  /** Of that, drawn properly from a protocol pool. */
+  protocolCovered: number;
 }
 export interface TrackerMatrix {
   months: string[]; rows: TrackerRow[]; truncated: boolean; totalRows: number;
@@ -2512,6 +2665,59 @@ export interface OverdueReturn {
   coverage: { withDoctor: number; withDisease: number; of: number };
 }
 
+/**
+ * A clinic's own lead performance. `won` is the subset of `converted` the clinic actually worked
+ * for — see the service for why the two are reported apart rather than one standing for both.
+ */
+export interface ClinicLeadCut {
+  key: string; label: string; assigned: number; converted: number; won: number; rate: number;
+}
+export interface ClinicLeadsReport {
+  asOf: string;
+  range: { from: string; to: string };
+  clinics: number;
+  total: {
+    assigned: number; converted: number; won: number; open: number; lost: number; junk: number;
+    winRate: number; convertedRate: number;
+    /** Hours. The client picks minutes / hours / days — days alone was unreadable at this scale. */
+    medianHoursToConvert: number;
+    /** Marked converted by the desk but no patient was ever registered. */
+    markedNotRegistered: number;
+    /** Registered, but stamped within 2s of routing — excluded from the median. */
+    convertedOnArrival: number;
+  };
+  /** Converted on paper, never started treatment. `linked` is the checkable denominator. */
+  noMedicine: { count: number; linked: number; unlinked: number; rate: number };
+  /** Chain-wide, active clinics only — measures the same thing as the headline. */
+  chain: { assigned: number; converted: number; rate: number };
+  byMonth: { month: string; assigned: number; converted: number; won: number; rate: number }[];
+  bySource: ClinicLeadCut[];
+  byRouter: ClinicLeadCut[];
+  /** The queue as it stands — not date-filtered, on purpose. */
+  openNow: { open: number; overdue: number; noNextAction: number; escalated: number; oldestDays: number };
+  quality: {
+    onArrival: number; convertedBeforeAssigned: number;
+    withDisease: number; withCampaign: number; of: number;
+  };
+}
+
+/** One lead behind a number on the clinic-leads summary. */
+export interface ClinicLeadRowDetail {
+  id: string; name: string; phone: string; email: string | null;
+  clinic: string; source: string; campaign: string | null; disease: string | null; area: string | null;
+  status: string; level: number; callStatus: string | null;
+  owner: string | null; routedBy: string | null; won: boolean;
+  assignedAt: string | null; nextActionAt: string | null; convertedAt: string | null;
+  visitedAt: string | null; escalated: boolean; createdAt: string | null;
+  lastNote: string | null; lastNoteAt: string | null;
+}
+export interface ClinicLeadsList {
+  cut: string; total: number; limit: number; offset: number;
+  /** True when there is more than the page shows — surfaced, never a silent cap. */
+  truncated: boolean;
+  rows: ClinicLeadRowDetail[];
+}
+
 export const analyticsApi = {
   /**
    * The department packs' NEW metrics. Everything else on those screens is fetched from the
@@ -2520,12 +2726,20 @@ export const analyticsApi = {
   deptTelecallerDaily: (f: AnalyticsFilter = {}) => api<any>(`/analytics/dept/telecaller-daily${q(f as any)}`),
   deptFollowupPunctuality: (f: AnalyticsFilter = {}) => api<any>(`/analytics/dept/followup-punctuality${q(f as any)}`),
   deptReferrals: (f: AnalyticsFilter = {}) => api<any>(`/analytics/dept/referrals${q(f as any)}`),
+  /** Clinic x source lead matrix for the Marketing pack. */
+  deptClinicLeadMatrix: (f: AnalyticsFilter = {}) => api<any>(`/analytics/dept/clinic-lead-matrix${q(f as any)}`),
   deptVisitsByDisease: (f: AnalyticsFilter = {}) => api<any>(`/analytics/dept/visits-by-disease${q(f as any)}`),
   deptVisitedNotMedicated: (f: AnalyticsFilter = {}) => api<any>(`/analytics/dept/visited-not-medicated${q(f as any)}`),
   deptPhysiology: (f: AnalyticsFilter & { code?: string } = {}) => api<any>(`/analytics/dept/physiology${q(f as any)}`),
   deptFirstMonthBilling: (f: AnalyticsFilter = {}) => api<any>(`/analytics/dept/first-month-billing${q(f as any)}`),
   deptRevenueByDisease: (f: AnalyticsFilter = {}) => api<any>(`/analytics/dept/revenue-by-disease${q(f as any)}`),
+  deptBillingAverages: (f: AnalyticsFilter = {}) => api<any>(`/analytics/dept/billing-averages${q(f as any)}`),
   deptInventoryExtras: () => api<any>('/analytics/dept/inventory-extras'),
+  /** The leads behind a number on that report — the worklist the clinic acts on. */
+  clinicLeadsList: (f: AnalyticsFilter & { cut?: string; limit?: string; offset?: string } = {}) =>
+    api<ClinicLeadsList>(`/analytics/clinic-leads/list${q(f as any)}`),
+  /** This clinic's own lead performance — assigned, won, and what is still in the queue. */
+  clinicLeads: (f: AnalyticsFilter = {}) => api<ClinicLeadsReport>(`/analytics/clinic-leads${q(f as any)}`),
   /** Patients who were due back and have not visited — consolidated, by clinic, doctor and disease. */
   overdueReturn: (f: { clinicId?: string; kind?: string } = {}) =>
     api<OverdueReturn>(`/analytics/overdue-return${q(f as any)}`),
@@ -2603,6 +2817,8 @@ export const crmInsightsApi = {
 
 // ---- Ozonetel telephony dashboard (sourced from the provider's own CDR, not lead_call) ----
 export interface TeleBucket { label: string; calls: number; connected: number; talkSec: number; answerRate: number }
+/** Returned by bd54cb5 and rendered since 31 Aug 2026 — see the scope banner in TelephonyDashboard. */
+export interface TeleScope { clinicScoped: boolean; notAttributable: number; scope: 'own' | 'team' }
 export interface TeleAgent {
   agentCode: string; agentName: string; mappedToJclinic: boolean;
   calls: number; connected: number; inbound: number; outbound: number;
@@ -2610,6 +2826,7 @@ export interface TeleAgent {
   holdSec: number; withRecording: number;
 }
 export interface TelephonyDash {
+  clinicScoped?: boolean; notAttributable?: number; scope?: 'own' | 'team';
   range: { from: string; to: string };
   empty: boolean;
   totals: {
@@ -2617,6 +2834,8 @@ export interface TelephonyDash {
     inboundConnected: number; outboundConnected: number; uniqueNumbers: number;
     totalTalkSec: number; avgTalkSec: number; avgHandleSec: number; totalWrapSec: number;
     withRecording: number; activeAgents: number; activeDays: number;
+    /** Ring attempts on agent handsets that were never calls — disclosed, never counted. */
+    huntLegs: number; avgWrapSec: number;
   };
   byDay: { date: string; calls: number; connected: number; inbound: number; outbound: number; talkSec: number }[];
   byHour: { hour: string; calls: number; connected: number }[];

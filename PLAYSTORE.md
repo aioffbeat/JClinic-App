@@ -122,21 +122,26 @@ doing from the second release on.
 
 ---
 
-## 6. Two gaps Google will actually check
+## 6. Reviewer access and account deletion — both DONE
 
-**Reviewer access.** The app has no password login — only SMS OTP, which Google's reviewer cannot
-receive, and "App access" requires working credentials. Options, best first:
-1. Add a server-side **review bypass**: a fixed OTP for the one demo number, enabled by env var
-   (e.g. `REVIEW_OTP_PHONE=7710001103`, `REVIEW_OTP_CODE=......`), constant-time compared, only
-   for that number, off by default. Small change in `portal.service.ts` `verifyOtp`.
-2. A recorded video of the login flow plus notes — Google sometimes accepts this, but rejections
-   for inaccessible apps are common.
+**Reviewer access** — a server-side review bypass now exists, off by default. During review only,
+set in the VPS `.env` and restart the api:
 
-**Account deletion.** The app offers self-registration, so Play policy requires a way to request
-account **and data** deletion, discoverable both in-app and via a web URL. Today neither exists.
-Minimum compliant path: a section on the legal Contact page stating how to request deletion
-(email/phone, what happens, timeframe), linked from the app's settings, and its URL entered in the
-Data safety form. Note DPDP points the same direction anyway — consent withdrawal is already
-modelled server-side (`Consent.revokedAt`).
+```
+REVIEW_OTP_PHONE=+917710001103
+REVIEW_OTP_CODE=<pick a 6+ digit code>
+```
 
-Neither is optional; submitting without them is how health apps get rejected on the first pass.
+Then in Play Console → App access, give the reviewer: phone `+91 77100 01103`, code `<the code>`.
+That one number signs in with that fixed code and receives no SMS; every other number is untouched
+(constant-time compare, nothing written). **Unset both and restart the api when review finishes.**
+Verified inert by default: with the vars unset, the demo number + any code returns 401.
+
+**Account deletion** — live at **https://clinic.drjoshis.in/legal/deletion**: how to request, how
+the request is verified (against the registered number), the 30-day completion window, and what
+clinical/billing records medical-establishment and tax law require the clinic to retain. That URL
+goes in the Data safety form. The app links to it from Home, next to Sign out, satisfying the
+in-app-discoverability half of the policy.
+
+One operational note: the page commits the clinic to acting on deletion requests sent to
+care@drjoshis.in within 30 days. Make sure someone actually owns that inbox.

@@ -23,6 +23,10 @@ export const ACTION_LABEL: Record<string, string> = {
   'encounter.amend.diagnosis_add': 'Diagnosis added',
   'encounter.amend.diagnosis_edit': 'Diagnosis corrected',
   'encounter.amend.diagnosis_delete': 'Diagnosis removed',
+  'encounter.amend.prescription_add': 'Medicine added',
+  'encounter.amend.prescription_edit': 'Medicine corrected',
+  'encounter.amend.prescription_delete': 'Medicine removed',
+  'encounter.amend.prescription_sign': 'Prescription signed',
   'encounter.amend.attachment_add': 'File attached',
   'encounter.amend.attachment_edit': 'File details corrected',
   'encounter.amend.attachment_delete': 'File removed',
@@ -42,6 +46,14 @@ function movedFields(before: any, after: any): string[] {
 
 /** One line describing what changed. Never throws on an unexpected shape — an unreadable trail
  *  entry is still better than a page that crashes on it. */
+/** "Ashwagandha 500mg · 1-0-1 · 15d" — never throws on a shape it does not recognise. */
+function rxLine(v: any): string {
+  if (!v || typeof v !== 'object') return 'medicine';
+  const bits = [v.drug, v.dose, v.frequency, v.durationDays ? `${v.durationDays}d` : null]
+    .filter((x) => x != null && String(x).trim() !== '');
+  return bits.length ? bits.map(String).join(' · ') : 'medicine';
+}
+
 export function describeAmendment(a: Amendment): string {
   const b = a.before ?? {};
   const f = a.after ?? {};
@@ -58,6 +70,16 @@ export function describeAmendment(a: Amendment): string {
       return `${s(b.description)} removed`;
     case 'encounter.amend.diagnosis_add':
       return s(f.description);
+    // A medicine reads as the doctor wrote it — drug, dose, frequency, days — so the trail can be
+    // read without opening the prescription it came from.
+    case 'encounter.amend.prescription_add':
+      return rxLine(f);
+    case 'encounter.amend.prescription_delete':
+      return `${rxLine(b)} removed`;
+    case 'encounter.amend.prescription_edit':
+      return `${rxLine(b)} → ${rxLine(f)}`;
+    case 'encounter.amend.prescription_sign':
+      return `${s(f.items)} medicine(s)${f.resigned ? ' · re-signed' : ''}`;
     case 'encounter.amend.attachment_add':
       return `${s(f.caption || f.fileName)}${f.category ? ` (${String(f.category).replace(/_/g, ' ')})` : ''}`;
     case 'encounter.amend.attachment_delete':

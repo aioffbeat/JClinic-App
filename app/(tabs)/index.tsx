@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { useRouter } from 'expo-router';
+import { Linking } from 'react-native';
 import { useQuery } from '@tanstack/react-query';
 import { dmy, portalApi, type PortalBill } from '@/src/api';
 import {
@@ -143,6 +144,16 @@ export default function Home() {
       )}
 
       <Button title="Sign out" variant="secondary" onPress={signOut} style={{ marginTop: space.lg }} />
+
+      {/* Play policy: an app with account creation must make deletion discoverable IN the app, not
+          only at a URL. The page itself lives on the web because the flow is human-verified — the
+          clinic confirms the request against the registered number before deleting anything. */}
+      <Button
+        title="Delete my account & data"
+        variant="secondary"
+        onPress={() => Linking.openURL('https://clinic.drjoshis.in/legal/deletion')}
+        style={{ marginTop: space.sm }}
+      />
       <Caption>Your records are private to you.</Caption>
       <AsOf at={followup.dataUpdatedAt || null} />
     </Screen>
