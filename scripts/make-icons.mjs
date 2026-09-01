@@ -190,8 +190,65 @@ function encodePng(w, h, rgba) {
 
 // ---- write -------------------------------------------------------------------------------------
 mkdirSync(OUT, { recursive: true });
+/** A wide canvas (Play's 1024x500 feature graphic) with the lotus set off-centre. */
+function makeWide(w, h) {
+  const px = Buffer.alloc(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      const rgb = heroAt((x / w) * 0.6 + (y / h) * 0.4);
+      px[i] = rgb[0]; px[i + 1] = rgb[1]; px[i + 2] = rgb[2]; px[i + 3] = 255;
+    }
+  }
+  // Lotus on the right third; drawLotus takes a square size, so pass the height and offset x by
+  // drawing into a temporary square then compositing would be heavier than just calling it with
+  // the min dimension and shifting the centre.
+  drawLotusAt(px, w, h, w * 0.78, h * 0.42, h * 1.05, true);
+  return encodePng(w, h, px);
+}
+
+/** drawLotus generalised to a non-square canvas. */
+function drawLotusAt(px, w, h, cx, cy, size, onDark) {
+  const square = { get(i) { return px[i]; } };
+  void square;
+  const petals = [
+    { deg: -58, alpha: 0.75 }, { deg: -29, alpha: 0.85 }, { deg: 0, alpha: 1 },
+    { deg: 29, alpha: 0.85 }, { deg: 58, alpha: 0.75 },
+  ];
+  const scale = 1.5;
+  const rx = 0.062 * size * scale;
+  const ry = 0.145 * size * scale;
+  const pivotY = cy + 0.16 * size * scale;
+  const dist = 0.15 * size * scale;
+  const aaPx = Math.max(1, size / 900);
+  const fill = [255, 255, 255];
+  for (const p of [...petals].sort((a, b) => Math.abs(b.deg) - Math.abs(a.deg))) {
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const c = petalCoverage(x, y, cx, pivotY, dist, rx, ry, p.deg, aaPx);
+        if (c <= 0) continue;
+        blend(px, (y * w + x) * 4, fill, c * p.alpha * (onDark ? 0.9 : 1));
+      }
+    }
+  }
+  const seatRx = 0.135 * size * scale;
+  const seatRy = 0.038 * size * scale;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const d = Math.sqrt(((x - cx) / seatRx) ** 2 + ((y - pivotY) / seatRy) ** 2);
+      const edgePx = (d - 1) * Math.min(seatRx, seatRy);
+      if (edgePx >= aaPx) continue;
+      const a = edgePx <= -aaPx ? 1 : (aaPx - edgePx) / (2 * aaPx);
+      blend(px, (y * w + x) * 4, fill, a * 0.95);
+    }
+  }
+}
+
 const files = [
   ['icon.png', makeIcon(1024, { background: 'gradient', onDark: true, scale: 1.6, padded: false })],
+  // Play Console store listing wants exactly 512x512 and a 1024x500 feature graphic.
+  ['play-icon-512.png', makeIcon(512, { background: 'gradient', onDark: true, scale: 1.6, padded: false })],
+  ['play-feature-1024x500.png', makeWide(1024, 500)],
   ['adaptive-icon.png', makeIcon(1024, { background: 'gradient', onDark: true, scale: 1.6, padded: true })],
   ['splash.png', makeIcon(1024, { background: 'mist', onDark: false, scale: 1.5, padded: false })],
   ['favicon.png', makeIcon(48, { background: 'gradient', onDark: true, scale: 1.6, padded: false })],
