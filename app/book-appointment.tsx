@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { Stack, useRouter } from 'expo-router';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { portalApi } from '@/src/api';
+import { ApiError, portalApi } from '@/src/api';
 import { Body, Button, Caption, Card, H1, Label, Loading, Notice, Screen, color, space } from '@/src/ui';
 
 /**
@@ -22,6 +22,13 @@ type Purpose = (typeof PURPOSES)[number];
 export default function BookAppointment() {
   const router = useRouter();
   const qc = useQueryClient();
+  /**
+   * Doubles as the reschedule picker. Asking for a new time needs exactly what booking needs — the
+   * clinic's real grid — and requestReschedule is validated against it just as strictly as book();
+   * the old "same weekday next week" shortcut proposed times the server rejected outright.
+   */
+  const { reschedule: rescheduleId } = useLocalSearchParams<{ reschedule?: string }>();
+  const isReschedule = !!rescheduleId;
 
   const [purpose, setPurpose] = useState<Purpose>('Doctor consultation');
   const [date, setDate] = useState(() => isoDate(addDays(new Date(), 1)));
@@ -32,35 +39,58 @@ export default function BookAppointment() {
     queryFn: () => portalApi.slots(date),
   });
 
+  // Same key the Book tab uses, so this is normally a cache hit; it carries the clinic's horizon.
+  const appts = useQuery({ queryKey: ['portal', 'appointments'], queryFn: () => portalApi.appointments() });
+
   const book = useMutation({
-    mutationFn: (startsAt: string) => portalApi.book({ startsAt, purpose }),
+    // The two endpoints return different shapes and nothing here reads either — both are followed
+    // by an invalidate and a navigation, so the result is deliberately widened to void.
+    mutationFn: async (startsAt: string): Promise<void> => {
+      if (isReschedule) await portalApi.requestReschedule(rescheduleId!, startsAt);
+      else await portalApi.book({ startsAt, purpose });
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['portal', 'appointments'] });
+      if (isReschedule) Alert.alert('Requested', 'The clinic will confirm your new time.');
       router.replace('/(tabs)/book');
+    },
+    onError: (e) => {
+      // The server distinguishes taken, closed, too-far and past-the-cutoff, and each message says
+      // what to do. Collapsing them into one sentence sent people to the phone unnecessarily.
+      const msg = e instanceof ApiError ? (e.body as { message?: string } | undefined)?.message : null;
+      Alert.alert(isReschedule ? 'Could not request' : 'Could not book', msg ?? 'Please pick another time and try again.');
+      setChosen(null);
+      slots.refetch();
     },
   });
 
   const free = (slots.data?.slots ?? []).filter((s) => s.free);
   const closed = slots.data?.closed ?? false;
 
-  // The server states how far ahead booking is allowed; offering dates beyond it would only
-  // produce a refusal the patient cannot interpret.
-  const days = Array.from({ length: 14 }, (_, i) => isoDate(addDays(new Date(), i + 1)));
+  // Offering dates the clinic does not accept only produces a refusal the patient cannot
+  // interpret, so the horizon comes from the appointments payload where the server states it.
+  const horizon = Math.min(appts.data?.horizonDays ?? 14, 14);
+  const days = Array.from({ length: horizon }, (_, i) => isoDate(addDays(new Date(), i + 1)));
 
   return (
     <>
-      <Stack.Screen options={{ headerShown: true, title: 'Book', headerTintColor: color.petrolInk }} />
+      <Stack.Screen
+        options={{ headerShown: true, title: isReschedule ? 'Reschedule' : 'Book', headerTintColor: color.petrolInk }}
+      />
       <Screen>
-        <H1>Book a visit</H1>
+        <H1>{isReschedule ? 'Ask for another time' : 'Book a visit'}</H1>
 
-        <Card>
-          <Label>What is this for?</Label>
-          <View style={styles.row}>
-            {PURPOSES.map((p) => (
-              <Choice key={p} text={p} on={purpose === p} onPress={() => setPurpose(p)} />
-            ))}
-          </View>
-        </Card>
+        {/* Purpose belongs to the booking only — a reschedule keeps whatever the visit was for. */}
+        {!isReschedule && (
+          <Card>
+            <Label>What is this for?</Label>
+            <View style={styles.row}>
+              {PURPOSES.map((p) => (
+                <Choice key={p} text={p} on={purpose === p} onPress={() => setPurpose(p)} />
+              ))}
+            </View>
+          </Card>
+        )}
 
         <Card>
           <Label>Which day?</Label>
@@ -107,7 +137,7 @@ export default function BookAppointment() {
         )}
 
         <Button
-          title="Confirm booking"
+          title={isReschedule ? 'Request this time' : 'Confirm booking'}
           onPress={() => chosen && book.mutate(chosen)}
           loading={book.isPending}
           disabled={!chosen}
@@ -132,7 +162,10 @@ function Choice({ text, on, onPress }: { text: string; on: boolean; onPress: () 
 }
 
 const addDays = (d: Date, n: number) => new Date(d.getTime() + n * 86400_000);
-const isoDate = (d: Date) => d.toISOString().slice(0, 10);
+/** LOCAL calendar date. toISOString() is UTC, and the server reads this as an IST day — before
+ *  05:30 IST that shifted the whole strip a day early, onto dates mostly inside the lead time. */
+const isoDate = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const dayLabel = (iso: string) => {
   const d = new Date(`${iso}T00:00:00`);
   return `${d.toLocaleDateString([], { weekday: 'short' })} ${d.getDate()}`;

@@ -35,7 +35,13 @@ export default function Pay() {
   });
 
   const s = status.data;
-  const amount = s?.amount ?? s?.outstanding ?? 0;
+  /**
+   * What is LEFT to pay, not the bill total. `amount` is the total and is always present, so the
+   * old `amount ?? outstanding` never once reached the fallback: after a part-payment at the desk
+   * the UPI intent asked for the whole charge again, while the Razorpay button on the same screen
+   * correctly charged the balance (portal.service.ts charges `outstanding`).
+   */
+  const amount = s?.outstanding ?? s?.amount ?? 0;
   const paid = s?.payState === 'paid';
 
   function openUpi() {

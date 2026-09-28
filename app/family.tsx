@@ -28,7 +28,8 @@ export default function Family() {
 
   const grant = useMutation({
     mutationFn: () =>
-      portalApi.grantAccess({ caregiverPhone: phone.trim(), relationship: relationship.trim() || undefined, signature: signature.trim() }),
+      // The DTO is digits with an optional +, and a phone keypad offers spaces and brackets.
+      portalApi.grantAccess({ caregiverPhone: phone.replace(/[^\d+]/g, ''), relationship: relationship.trim() || undefined, signature: signature.trim() }),
     onSuccess: () => {
       setPhone('');
       setRelationship('');

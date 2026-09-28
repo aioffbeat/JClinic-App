@@ -11,6 +11,7 @@ import {
   setRefreshToken,
   setUpPush,
   unregisterPushToken,
+  type RefreshedSession,
 } from '@/src/lib';
 
 /**
@@ -21,6 +22,14 @@ import {
  * demographics and disease list; the patient ID comes from verifyOtp/switchPatient, which is where
  * the server actually establishes who the session is for.
  */
+/** What verifyOtp and register both return — enough to establish a session. */
+export interface EstablishedSession {
+  access_token: string;
+  refresh_token?: string;
+  patient: { id: string; name: string };
+  accessible?: { patientId: string; name: string; relation: string }[];
+}
+
 export interface PortalMe {
   name: string;
   phone: string | null;
@@ -42,6 +51,8 @@ type SessionState = {
   signedIn: boolean;
   requestOtp: (phone: string) => Promise<void>;
   verifyOtp: (phone: string, code: string) => Promise<void>;
+  /** For self-registration, which signs the patient in through a different endpoint. */
+  establish: (res: EstablishedSession) => Promise<void>;
   switchPatient: (patientId: string) => Promise<void>;
   signOut: () => Promise<void>;
 };
@@ -92,17 +103,40 @@ export function PatientSessionProvider({ children }: { children: ReactNode }) {
    * once; refreshAccessToken() also de-duplicates internally, because presenting an
    * already-rotated token is exactly what the server treats as theft.
    */
+  /**
+   * Apply a refreshed session, INCLUDING who it is for.
+   *
+   * The server re-derives the active chart on refresh — the primary `self`, else the first grant —
+   * so a refresh after switching to a parent's or child's record moves the subject back without
+   * telling anyone. Keeping the cached name over that produced the worst possible screen: "Hello,
+   * Mum" above her son's medicines. When the id really has changed, the cache belongs to the
+   * previous chart and goes, exactly as it does on a deliberate switch.
+   */
+  const adopt = useCallback(async (s: RefreshedSession) => {
+    const name = s.patient?.name ?? getPortalName() ?? undefined;
+    setPortalSession(s.accessToken, name);
+    if (s.accessible) setAccessible(s.accessible);
+    if (!s.patient) return;
+    const moved = getCachedPatientId() !== s.patient.id;
+    await cachePatientId(s.patient.id);
+    setPatient(s.patient);
+    if (moved) {
+      await clearQueryCache();
+      portalApi.me().then(setMe).catch(() => {});
+    }
+  }, []);
+
   const recover = useCallback(async () => {
     if (recovering.current) return;
     recovering.current = true;
     try {
-      const token = await refreshAccessToken();
-      if (token) setPortalSession(token, getPortalName() ?? undefined);
+      const session = await refreshAccessToken();
+      if (session) await adopt(session);
       else await hardSignOut();
     } finally {
       recovering.current = false;
     }
-  }, [hardSignOut]);
+  }, [hardSignOut, adopt]);
 
   useEffect(() => {
     const listener = () => void recover();
@@ -148,30 +182,45 @@ export function PatientSessionProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const sub = AppState.addEventListener('change', (next) => {
       if (next !== 'active' || !getPortalToken()) return;
-      refreshAccessToken().then((token) => {
-        if (token) setPortalSession(token, getPortalName() ?? undefined);
+      refreshAccessToken().then((session) => {
+        if (session) void adopt(session);
       });
     });
     return () => sub.remove();
-  }, []);
+  }, [adopt]);
 
   const requestOtp = useCallback(async (phone: string) => {
     await portalApi.requestOtp(phone);
   }, []);
 
-  const verifyOtp = useCallback(async (phone: string, code: string) => {
-    const device = await describeDevice();
-    const res = await portalApi.verifyOtp(phone, code, device);
+  /**
+   * Everything that makes a token into a session.
+   *
+   * Registration used to do only the first two lines of this by hand, and every omission was
+   * invisible: no name on Home, no Family card, notification taps dead because `signedIn` gates
+   * the router, and — the one that matters — no push registration, so a patient who registered and
+   * never signed out received none of the dose reminders this app exists for.
+   *
+   * `accessible` is optional because /portal/register does not return it: a brand-new patient can
+   * only reach their own chart, and the list is refreshed from the server on the next launch.
+   */
+  const establish = useCallback(async (res: EstablishedSession) => {
     setPortalSession(res.access_token, res.patient.name);
     if (res.refresh_token) await setRefreshToken(res.refresh_token);
     await cachePatientId(res.patient.id);
     setPatient(res.patient);
-    setAccessible(res.accessible);
+    setAccessible(res.accessible ?? [{ patientId: res.patient.id, name: res.patient.name, relation: 'self' }]);
     setSignedIn(true);
     portalApi.me().then(setMe).catch(() => {});
     // Fire-and-forget: a declined notification permission must not fail a successful sign-in.
     void setUpPush();
   }, []);
+
+  const verifyOtp = useCallback(async (phone: string, code: string) => {
+    const device = await describeDevice();
+    const res = await portalApi.verifyOtp(phone, code, device);
+    await establish(res);
+  }, [establish]);
 
   /**
    * Switch to another chart reachable from this phone.
@@ -200,8 +249,8 @@ export function PatientSessionProvider({ children }: { children: ReactNode }) {
   }, [hardSignOut]);
 
   const value = useMemo(
-    () => ({ patient, me, accessible, signedIn, requestOtp, verifyOtp, switchPatient, signOut }),
-    [patient, me, accessible, signedIn, requestOtp, verifyOtp, switchPatient, signOut],
+    () => ({ patient, me, accessible, signedIn, requestOtp, verifyOtp, establish, switchPatient, signOut }),
+    [patient, me, accessible, signedIn, requestOtp, verifyOtp, establish, switchPatient, signOut],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

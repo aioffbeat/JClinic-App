@@ -37,12 +37,12 @@ export default function Lifestyle() {
     mutationFn: () =>
       portalApi.addLifestyle({
         dietSummary: form.dietSummary.trim() || undefined,
-        exerciseMin: num(form.exerciseMin),
-        waterMl: num(form.waterMl),
+        exerciseMin: whole(form.exerciseMin),
+        waterMl: whole(form.waterMl),
         weightKg: num(form.weightKg),
-        systolic: num(form.systolic),
-        diastolic: num(form.diastolic),
-        bloodSugar: num(form.bloodSugar),
+        systolic: whole(form.systolic),
+        diastolic: whole(form.diastolic),
+        bloodSugar: whole(form.bloodSugar),
         notes: form.notes.trim() || undefined,
       }),
     onSuccess: () => {
@@ -53,6 +53,7 @@ export default function Lifestyle() {
 
   const rows = logs.data ?? [];
   const anything = Object.values(form).some((v) => v.trim());
+  const rangeError = outOfRange(form);
 
   return (
     <>
@@ -86,9 +87,10 @@ export default function Lifestyle() {
             title="Save today"
             onPress={() => add.mutate()}
             loading={add.isPending}
-            disabled={!anything}
+            disabled={!anything || !!rangeError}
             style={{ marginTop: space.md }}
           />
+          {!!rangeError && <Notice title="Check this before saving" body={rangeError} tone="bad" />}
           {add.isError && <Notice title="Could not save" body="Please try again once you have a connection." tone="bad" />}
         </Card>
 
@@ -153,6 +155,36 @@ function num(v: string): number | undefined {
   if (!t) return undefined;
   const n = Number(t);
   return Number.isFinite(n) ? n : undefined;
+}
+
+/**
+ * The DTO marks exercise, water, BP and sugar @IsInt, and the numeric keypad offers a decimal
+ * point on both platforms — "30.5" minutes was a 400 the screen reported as a connection problem.
+ */
+function whole(v: string): number | undefined {
+  const n = num(v);
+  return n === undefined ? undefined : Math.round(n);
+}
+
+/**
+ * Mirrors LifestyleLogDto's bounds. Checked here so a mistyped BP is caught while the field is
+ * still on screen, instead of coming back as an opaque failure with the form full of values the
+ * patient now has to re-examine one by one.
+ */
+const LIMITS: { key: string; label: string; min: number; max: number }[] = [
+  { key: 'weightKg', label: 'Weight', min: 1, max: 500 },
+  { key: 'systolic', label: 'Systolic', min: 50, max: 300 },
+  { key: 'diastolic', label: 'Diastolic', min: 30, max: 200 },
+  { key: 'bloodSugar', label: 'Blood sugar', min: 20, max: 800 },
+  { key: 'exerciseMin', label: 'Exercise', min: 0, max: 1440 },
+  { key: 'waterMl', label: 'Water', min: 0, max: 20000 },
+];
+function outOfRange(form: Record<string, string>): string | null {
+  for (const l of LIMITS) {
+    const n = num(form[l.key] ?? '');
+    if (n !== undefined && (n < l.min || n > l.max)) return `${l.label} should be between ${l.min} and ${l.max}.`;
+  }
+  return null;
 }
 
 const styles = StyleSheet.create({

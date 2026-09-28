@@ -2,8 +2,9 @@ import { useState } from 'react';
 import { Stack, useRouter } from 'expo-router';
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { ApiError, portalApi, setPortalSession, type PublicClinic } from '@/src/api';
-import { describeDevice, setRefreshToken } from '@/src/lib';
+import { ApiError, portalApi, type PublicClinic } from '@/src/api';
+import { describeDevice } from '@/src/lib';
+import { usePatientSession } from '@/src/session-context';
 import { Body, Button, Caption, Card, H1, H2, Label, Loading, Notice, Screen, color, space } from '@/src/ui';
 
 /**
@@ -34,6 +35,10 @@ function addDays(d: Date, n: number) {
   x.setDate(x.getDate() + n);
   return x;
 }
+/** The DTOs take digits with an optional +, and a phone keypad offers spaces, dashes and brackets. */
+function digits(v: string) {
+  return v.replace(/[^\d+]/g, '');
+}
 function dayLabel(iso: string) {
   const d = new Date(`${iso}T00:00:00`);
   return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
@@ -44,6 +49,7 @@ function timeLabel(iso: string) {
 
 export default function Register() {
   const router = useRouter();
+  const { establish } = usePatientSession();
   const [step, setStep] = useState<Step>('clinic');
   const [clinic, setClinic] = useState<PublicClinic | null>(null);
   const [phone, setPhone] = useState('');
@@ -52,6 +58,14 @@ export default function Register() {
 
   const [f, setF] = useState({ fullName: '', sex: 'female', dob: '', email: '', relation: 'self', signature: '' });
   const set = (k: keyof typeof f) => (v: string) => setF((p) => ({ ...p, [k]: v }));
+
+  /**
+   * Checked here because both fields are optional free text against @IsDateString / @IsEmail, and
+   * the server's refusal arrives as class-validator's own wording — after the patient has already
+   * spent an OTP and picked a slot. "01/01/1990" is the common one.
+   */
+  const dobOk = !f.dob.trim() || (/^\d{4}-\d{2}-\d{2}$/.test(f.dob.trim()) && !Number.isNaN(Date.parse(f.dob.trim())));
+  const emailOk = !f.email.trim() || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(f.email.trim());
 
   // The first visit is booked by this call, so it needs a real slot. Sending "same time tomorrow"
   // was refused by the server with `outside_hours` for everyone whose tomorrow-at-this-minute did
@@ -85,19 +99,25 @@ export default function Register() {
       if (e.status === 422) return e.body?.message ?? 'Please check the details and try again.';
       if (e.status === 503) return 'We could not send the code right now. Please try again, or call the clinic.';
       if (e.status === 401) return 'That code is not right, or it has expired.';
+      // class-validator sends `message` as an ARRAY of sentences. Left alone it stringifies into
+      // one comma-run of server jargon; the first line is the one the patient can act on.
+      if (e.status === 400) {
+        const m = (e.body as { message?: unknown } | undefined)?.message;
+        if (Array.isArray(m) && m.length) return `${String(m[0])}. Please check that field and try again.`;
+      }
       return e.message;
     }
     return 'Something went wrong. Please check your connection and try again.';
   }
 
   const sendCode = useMutation({
-    mutationFn: () => portalApi.registerRequestOtp(phone.trim()),
+    mutationFn: () => portalApi.registerRequestOtp(digits(phone)),
     onSuccess: () => { setError(null); setStep('code'); },
     onError: (e) => setError(explain(e)),
   });
 
   const checkCode = useMutation({
-    mutationFn: () => portalApi.registerVerifyOtp(phone.trim(), code.trim()),
+    mutationFn: () => portalApi.registerVerifyOtp(digits(phone), code.trim()),
     onSuccess: () => { setError(null); setStep('when'); },
     onError: (e) => setError(explain(e)),
   });
@@ -111,7 +131,7 @@ export default function Register() {
     mutationFn: async () => {
       const device = await describeDevice();
       return portalApi.register({
-        phone: phone.trim(),
+        phone: digits(phone),
         code: code.trim(),
         fullName: f.fullName.trim(),
         sex: f.sex,
@@ -126,9 +146,9 @@ export default function Register() {
       });
     },
     onSuccess: async (res) => {
-      setPortalSession(res.access_token, res.patient.name);
-      const withRefresh = res as { refresh_token?: string };
-      if (withRefresh.refresh_token) await setRefreshToken(withRefresh.refresh_token);
+      // The same session setup sign-in does — name, cached id, signedIn, and push registration.
+      // Doing only the token here left a new patient with no dose reminders at all.
+      await establish(res);
       router.replace('/pay');
     },
     onError: (e) => {
@@ -265,7 +285,7 @@ export default function Register() {
                   ))}
                 </View>
 
-                <Label>Date of birth (optional)</Label>
+                <Label>{dobOk ? 'Date of birth (optional)' : 'Date of birth — use YYYY-MM-DD, e.g. 1990-01-31'}</Label>
                 <TextInput
                   style={styles.input}
                   value={f.dob}
@@ -274,7 +294,7 @@ export default function Register() {
                   placeholderTextColor={color.slate}
                 />
 
-                <Label>Email (optional)</Label>
+                <Label>{emailOk ? 'Email (optional)' : 'Email — that does not look like an email address'}</Label>
                 <TextInput
                   style={styles.input}
                   value={f.email}
@@ -308,7 +328,7 @@ export default function Register() {
                   title="Create my account"
                   onPress={() => submit.mutate()}
                   loading={submit.isPending}
-                  disabled={f.fullName.trim().length < 2 || f.signature.trim().length < 2}
+                  disabled={f.fullName.trim().length < 2 || f.signature.trim().length < 2 || !dobOk || !emailOk}
                 />
                 <Caption>
                   {slot ? `Your visit: ${dayLabel(date)} at ${timeLabel(slot)}. ` : ''}

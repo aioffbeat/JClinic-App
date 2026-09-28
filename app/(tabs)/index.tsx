@@ -160,9 +160,14 @@ export default function Home() {
   );
 }
 
-/** What is still owed on a bill. The API models paid-so-far, not remaining. */
+/**
+ * What is still owed on a bill. The API models paid-so-far, not remaining — and separately from
+ * that, a bill the clinic has WRITTEN OFF stays in this list (only `void` is filtered out), so
+ * leaving writeOffAmount out showed a patient a debt the clinic's own screens report as settled.
+ * Same arithmetic as the server's outstandingOf in billing/bill-math.ts.
+ */
 function outstandingOf(b: PortalBill) {
-  return Math.max(0, Number(b.total) - Number(b.paidAmount));
+  return Math.max(0, Number(b.total) - Number(b.paidAmount) - Number(b.writeOffAmount ?? 0));
 }
 
 function inr(n: number) {

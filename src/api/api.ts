@@ -222,7 +222,8 @@ export interface AuthUser {
   isAdmin?: boolean;
   mustChangePassword?: boolean;
 }
-export interface HomeClinicTag { code: string; name: string }
+/** `id` is sent so the Edit-details form can preselect and change the centre (28 Sep 2026). */
+export interface HomeClinicTag { id?: string; code: string; name: string }
 export interface PatientSummary {
   id: string;
   mrn: string | null;
@@ -508,6 +509,10 @@ export const patientsApi = {
   /** Correct name / dialable phone (audited). Still narrow: never dob/sex, never the login phone. */
   /** Edit patient details — only changed fields, plus the required note. Returns the refreshed summary. */
   history: (id: string) => api<PatientChange[]>(`/patients/${id}/change-history`),
+  /** Who may approve a change to a patient's identity (name, gender, date of birth, clinic). */
+  amendApprovers: () => api<{ approverUserIds: string[]; approverNames: string[] }>('/patients/rules/patient-amend'),
+  setAmendApprovers: (approverUserIds: string[]) =>
+    api<{ approverUserIds: string[]; approverNames: string[] }>('/patients/rules/patient-amend', { method: 'PUT', body: JSON.stringify({ approverUserIds }) }),
   updateDetails: (id: string, data: Record<string, unknown> & { reason: string }) =>
     api<PatientSummary>(`/patients/${id}/details`, {
       method: 'PATCH',
@@ -2884,6 +2889,11 @@ export interface Approval {
   bill?: ApprovalBill | null;
   /** Which clinic raised it — the list spans every clinic the approver holds (12 Sep 2026). */
   clinicId?: string; clinic?: { id: string; code: string; name: string } | null;
+  /** A patient identity change (28 Sep 2026): who it is about and exactly what would change. */
+  amend?: {
+    patientId: string; patientName: string; patientPhone: string | null; clinic: string | null;
+    changes: string; fields: string[]; reason: string | null;
+  } | null;
 }
 
 /** `hardMax` is the rule itself (25) — a clinic may set maxPct lower, never higher. */
@@ -3541,7 +3551,11 @@ async function papiUpload<T = any>(path: string, form: FormData): Promise<T> {
   return body as T;
 }
 
-export interface SelfRegisterData { phone: string; code: string; fullName: string; sex: string; dob?: string; email?: string; address?: Record<string, unknown>; clinicId: string; category?: string; consentName: string; consentRelation?: string; visitAt: string }
+export interface SelfRegisterData { phone: string; code: string; fullName: string; sex: string; dob?: string; email?: string; address?: Record<string, unknown>; clinicId: string; category?: string; consentName: string; consentRelation?: string; visitAt: string;
+  /** Mobile only, exactly as on verifyOtp: sending them is what mints a refresh_token. The web
+   *  form sends none of these. Declared because the app spreads them in — typecheck does not catch
+   *  excess properties through a spread, so the omission was invisible until the server rejected it. */
+  deviceId?: string; platform?: string; appVersion?: string; deviceName?: string }
 export interface PublicClinic { id: string; name: string; code: string; address?: string | null; visitingCharge: number; upiId: string; upiName: string; razorpayEnabled: boolean }
 /**
  * What /portal/public/slots returns. Unlike the signed-in SlotsResponse these are already filtered
@@ -3572,6 +3586,10 @@ export interface PortalAppointment {
 export interface PortalAppointments { cancelCutoffMin: number; horizonDays: number; upcoming: PortalAppointment[]; past: PortalAppointment[] }
 export interface PortalBill {
   id: string; number: string; total: number; paidAmount: number; payState: string;
+  /** Written off by the clinic. The list includes these bills (only `void` is excluded), so a
+   *  caller computing what is owed as total - paid shows a patient money they do not owe. The
+   *  server's own sum is total - paid - writeOff (billing/bill-math.ts). */
+  writeOffAmount?: number;
   dueDate?: string | null; createdAt: string; pendingChange?: unknown; shareUrl: string;
 }
 /** One finished visit as the doctor recorded it — the shape behind the portal's Medical history tab. */
@@ -3599,7 +3617,10 @@ export interface PortalVisit {
 
 export const portalApi = {
   /** The patient's next follow-up (doctor track preferred), or null. */
-  nextFollowup: () => api<{ dueAt: string; kind: string; clinic: string | null; clinicPhone: string | null } | null>('/portal/next-followup'),
+  // papi, like every other call here. It was the one entry using the staff `api()`, which reads a
+  // different storage key: on the web a signed-in staff token masked it, and on mobile — where
+  // nothing ever writes that key — the Home card simply 401'd on every load and rendered nothing.
+  nextFollowup: () => papi<{ dueAt: string; kind: string; clinic: string | null; clinicPhone: string | null } | null>('/portal/next-followup'),
   // public self-service registration (no token)
   publicClinics: () => papi<PublicClinic[]>('/portal/clinics'),
   /**

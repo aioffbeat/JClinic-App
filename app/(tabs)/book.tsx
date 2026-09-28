@@ -1,5 +1,4 @@
 import { Alert, StyleSheet, Text, View } from 'react-native';
-import { useState } from 'react';
 import { useRouter } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { portalApi, type PortalAppointment } from '@/src/api';
@@ -26,31 +25,16 @@ export default function Book() {
     queryFn: () => portalApi.appointments(),
   });
 
-  const [rescheduling, setRescheduling] = useState<string | null>(null);
 
   /**
-   * A reschedule is a REQUEST, not a move: the clinic confirms it. The API takes the proposed time
-   * and records it against the appointment, which is why the card shows "requested for" until the
-   * clinic acts. Proposing the same weekday a week later is the overwhelmingly common case and
-   * saves a date picker on a screen that does not otherwise need one.
+   * A reschedule is a REQUEST, not a move: the clinic confirms it. But the proposed time is
+   * validated against the clinic's grid exactly as a new booking is, so this hands off to the
+   * picker instead of proposing one. It used to offer "the same weekday next week", which the
+   * server rejected with outside_hours whenever that instant was not itself a free slot — the
+   * common case, since staff-booked visits are frequently off-grid to begin with.
    */
-  const reschedule = useMutation({
-    mutationFn: ({ id, startsAt }: { id: string; startsAt: string }) => portalApi.requestReschedule(id, startsAt),
-    onSuccess: () => {
-      setRescheduling(null);
-      qc.invalidateQueries({ queryKey: ['portal', 'appointments'] });
-      Alert.alert('Requested', 'The clinic will confirm your new time.');
-    },
-    onError: () => Alert.alert('Could not request', 'Please call the clinic instead.'),
-  });
-
   function askReschedule(a: PortalAppointment) {
-    const next = new Date(new Date(a.startsAt).getTime() + 7 * 86400_000).toISOString();
-    setRescheduling(a.id);
-    Alert.alert('Move to next week?', `Ask the clinic for ${when(next)} instead.`, [
-      { text: 'Not now', style: 'cancel', onPress: () => setRescheduling(null) },
-      { text: 'Request', onPress: () => reschedule.mutate({ id: a.id, startsAt: next }) },
-    ]);
+    router.push({ pathname: '/book-appointment', params: { reschedule: a.id } });
   }
 
   const cancel = useMutation({
@@ -89,12 +73,12 @@ export default function Book() {
       {upcoming.map((a) => (
         <Card key={a.id}>
           <Label>{when(a.startsAt)}</Label>
-          <Body>{a.service ?? a.type}</Body>
+          <Body>{a.patientNote ?? a.service ?? modeLabel(a.type)}</Body>
           {!!a.clinic?.name && <Caption>{a.clinic.name}</Caption>}
           {!!a.practitioner && <Caption>{a.practitioner}</Caption>}
 
           <View style={styles.row}>
-            <Pill text={a.status} tone={a.status === 'confirmed' ? 'ok' : 'neutral'} />
+            <Pill text={statusLabel(a.status)} tone={a.status === 'confirmed' ? 'ok' : 'neutral'} />
           </View>
 
           {!!a.rescheduleRequestedFor && (
@@ -106,7 +90,6 @@ export default function Book() {
               title="Ask to move this"
               variant="secondary"
               onPress={() => askReschedule(a)}
-              loading={reschedule.isPending && rescheduling === a.id}
               style={{ marginTop: space.md }}
             />
           )}
@@ -135,7 +118,7 @@ export default function Book() {
           {past.slice(0, 10).map((a) => (
             <Card key={a.id}>
               <Label>{when(a.startsAt)}</Label>
-              <Body muted>{a.service ?? a.type}</Body>
+              <Body muted>{a.patientNote ?? a.service ?? modeLabel(a.type)}</Body>
               {!!a.clinic?.name && <Caption>{a.clinic.name}</Caption>}
             </Card>
           ))}
@@ -147,6 +130,19 @@ export default function Book() {
   );
 }
 
+/**
+ * What the patient booked. Portal bookings store the chosen purpose in `patientNote` and leave
+ * `service` null on purpose (the service catalogue is internal and reception refines it), so the
+ * card used to fall through to `type` and read "physical".
+ */
+function modeLabel(type: string) {
+  return type === 'online' ? 'Online consultation' : 'Clinic visit';
+}
+/** Raw DB values — `no_show`, `checked_in` — are not sentences. */
+function statusLabel(status: string) {
+  const s = status.replace(/_/g, ' ');
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
 function when(iso: string) {
   const d = new Date(iso);
   return `${d.toLocaleDateString()} · ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;

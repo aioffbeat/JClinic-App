@@ -50,12 +50,26 @@ export async function setRefreshToken(token: string | null) {
  * first has already consumed and the server would treat it as theft and revoke everything. The
  * in-flight promise below is what stops a routine resume from logging the user out.
  */
-let inFlight: Promise<string | null> | null = null;
+let inFlight: Promise<RefreshedSession | null> | null = null;
 
-export function refreshAccessToken(): Promise<string | null> {
+/**
+ * What the server hands back, not just the token.
+ *
+ * `patient` matters: refreshSession re-derives the active chart from the account (the primary
+ * `self`, else the first grant), so a refresh after switching to a parent's or child's record
+ * silently moves the subject back. Returning it lets the caller notice instead of keeping a
+ * cached name over someone else's records.
+ */
+export type RefreshedSession = {
+  accessToken: string;
+  patient?: { id: string; name: string };
+  accessible?: { patientId: string; name: string; relation: string }[];
+};
+
+export function refreshAccessToken(): Promise<RefreshedSession | null> {
   if (inFlight) return inFlight;
 
-  const run = (async (): Promise<string | null> => {
+  const run = (async (): Promise<RefreshedSession | null> => {
     const refreshToken = await getRefreshToken();
     if (!refreshToken) return null;
 
@@ -77,7 +91,8 @@ export function refreshAccessToken(): Promise<string | null> {
 
       const body = await res.json();
       if (body.refresh_token) await setRefreshToken(body.refresh_token);
-      return (body.access_token as string) ?? null;
+      if (!body.access_token) return null;
+      return { accessToken: body.access_token as string, patient: body.patient, accessible: body.accessible };
     } catch {
       // Network failure. Keep the refresh token: the user is offline, not signed out.
       return null;
