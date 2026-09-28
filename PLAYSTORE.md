@@ -49,8 +49,11 @@ What to expect:
 - EAS asks nothing about signing — the keystore already exists on the account.
 - 10–15 minutes. It prints a build page URL and, when finished, a download link.
 - `npx eas build:list --platform android --limit 3` shows the link again later.
-- The version name comes from `version` in `app.config.ts` (0.1.0). The **versionCode is EAS's**
-  (`appVersionSource: "remote"`) — never set it by hand.
+- The version name comes from `version` in `app.config.ts` (0.1.0). The **versionCode is EAS's** —
+  never set it by hand. `appVersionSource: "remote"` alone does NOT increment it: without
+  `autoIncrement` in the profile every build comes out as code 1, and Play refuses the second
+  upload because that code is already used. Both are set now; `eas build:version:get --platform
+  android` says what the next build will carry.
 
 **This is the first release build this project has ever made.** Preview APKs have succeeded, but a
 release build links Android resources more strictly — this repo already lost one build to a

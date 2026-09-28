@@ -12,7 +12,7 @@ same EAS project. No Mac is needed: EAS builds, signs, and uploads in the cloud.
 | Bundle identifier | `in.drjoshis.jclinic.patient` (`app.config.ts`) |
 | Store build | `npm run build:appstore` → store-signed `.ipa` (the `production` profile) |
 | Upload | `npm run submit:appstore` → sends the latest build to App Store Connect |
-| Build numbers | Auto-incremented by EAS (`appVersionSource: "remote"`) |
+| Build numbers | EAS holds them (`appVersionSource: "remote"` + `autoIncrement` on the profile) |
 | Export compliance | `usesNonExemptEncryption: false` (HTTPS only), so there's no per-build question |
 | Permission strings | Camera / Photos / Face ID strings in `ios.infoPlist` |
 | iPhone only | `supportsTablet: false`, so **no iPad screenshots are required** |
