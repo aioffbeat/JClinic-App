@@ -1914,7 +1914,10 @@ export const publicApi = {
    * credentials to an endpoint that has no business seeing them.
    */
   testimonials: async (): Promise<PublicTestimonials> => {
-    const res = await fetch('/v1/public/testimonials');
+    // Bare fetch, but still through baseUrl: this file is shared verbatim with the mobile app,
+    // where a relative path resolves against the bundle and not the API host. Every other raw
+    // fetch here already does this.
+    const res = await fetch(`${P().baseUrl}/v1/public/testimonials`);
     if (!res.ok) throw new ApiError(res.status, null);
     return res.json();
   },

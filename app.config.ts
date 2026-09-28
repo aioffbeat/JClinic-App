@@ -45,7 +45,8 @@ const config: ExpoConfig = {
 
   android: {
     package: `in.drjoshis.jclinic.patient${SUFFIX}`,
-    adaptiveIcon: { foregroundImage: './assets/adaptive-icon.png', backgroundColor: '#1b3a8f' },
+    // The logo's own navy, so the ring sits on the same field Android fills behind it.
+    adaptiveIcon: { foregroundImage: './assets/adaptive-icon.png', backgroundColor: '#010381' },
     // Deliberately minimal. CAMERA is requested by expo-image-picker at the point of use; nothing
     // here asks for contacts, location or storage, and nothing should — Play's Data safety form
     // has to be answered for every permission listed.
