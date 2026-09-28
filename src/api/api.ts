@@ -1449,6 +1449,72 @@ export interface StockAuditDetail extends StockAuditRow {
   counters: { name: string; items: number }[];
   counts: StockAuditCountLine[];
 }
+// ─── Cash drawer (26 Sep 2026) ───────────────────────────────────────────────────────────────────
+export interface DrawerLedgerRow {
+  id: string; at: string; kind: string; label: string;
+  inAmt: number; outAmt: number; balance: number;
+  by: string | null; flags: string[]; voided: boolean; voidReason?: string | null;
+  note?: string | null; bankRef?: string | null; enteredLate: boolean; ref?: string | null;
+}
+export interface DrawerChequeRow {
+  id: string; at: string; amount: number; chequeNo: string | null; bank: string | null;
+  chequeDate: string | null; from: string; bill: string | null;
+}
+export interface DrawerCountRow {
+  id: string; at: string; counted: number; computed: number; variance: number;
+  reason: string | null; applied: boolean; by: string | null; voided: boolean;
+}
+export interface DrawerSummary {
+  clinicId: string; from: string; to: string; today: string;
+  /** What should be in the box right now. The one number the page exists for. */
+  balance: number;
+  opening: number; openingAt: string;
+  cashIn: number; cashRefunds: number; deposited: number; spent: number; handedOver: number; handedIn: number;
+  lastCountAt: string | null; daysSinceCount: number | null; neverCounted: boolean;
+  period: { cashIn: number; refunds: number; deposited: number; spent: number };
+  ledger: DrawerLedgerRow[];
+  cheques: { count: number; amount: number; rows: DrawerChequeRow[] };
+  ageing: { lastDepositAt: string | null; oldestUnbankedAt: string | null; days: number; amount: number };
+  /** Set when the past has changed since it was counted — a bill voided after its cash was banked. */
+  restated: { at: string; computedThen: number; computedNow: number; diff: number } | null;
+  counts: DrawerCountRow[];
+  config: { banks: { label: string; tallyLedger?: string }[]; largeExpenseAbove: number; backdateDays: number; countEveryDays: number };
+  categories: { key: string; label: string }[];
+}
+export interface DrawerChainRow {
+  clinicId: string; name: string; code: string;
+  balance: number; cashIn: number; deposited: number; spent: number;
+  lastCountAt: string | null; daysSinceCount: number | null; lastVariance: number | null;
+  unbankedDays: number; unbanked: number;
+}
+export interface DrawerWrite {
+  id: string; voucherNo: string; duplicate: boolean; flags: string[]; balanceAfter: number;
+  counted?: number; computed?: number; variance?: number; applied?: boolean; firstEver?: boolean; chequesBanked?: number;
+}
+
+export const cashDrawerApi = {
+  summary: (from?: string, to?: string) => {
+    const q = new URLSearchParams();
+    if (from) q.set('from', from);
+    if (to) q.set('to', to);
+    return api<DrawerSummary>(`/cash-drawer${q.toString() ? `?${q}` : ''}`);
+  },
+  /** Just the number — for the Day sheet tile, which must not pull a whole page. */
+  balance: () => api<{ balance: number; lastCountAt: string | null; neverCounted: boolean }>('/cash-drawer/balance'),
+  chain: (on?: string) => api<{ on: string; clinics: DrawerChainRow[]; total: number }>(`/cash-drawer/chain${on ? `?on=${on}` : ''}`),
+  deposit: (b: { amount: number; at: string; bankName: string; bankRef?: string; depositorName?: string; note?: string; chequeTxnIds?: string[]; idempotencyKey: string }) =>
+    api<DrawerWrite>('/cash-drawer/deposit', { method: 'POST', body: JSON.stringify(b) }),
+  expense: (b: { amount: number; at: string; category: string; payee?: string; note?: string; idempotencyKey: string }) =>
+    api<DrawerWrite>('/cash-drawer/expense', { method: 'POST', body: JSON.stringify(b) }),
+  handover: (b: { amount: number; at: string; recipientName: string; toClinicId?: string; note?: string; idempotencyKey: string }) =>
+    api<DrawerWrite>('/cash-drawer/handover', { method: 'POST', body: JSON.stringify(b) }),
+  count: (b: { countedAmount: number; at: string; apply?: boolean; varianceReason?: string; denominations?: Record<string, number>; note?: string; idempotencyKey: string }) =>
+    api<DrawerWrite>('/cash-drawer/count', { method: 'POST', body: JSON.stringify(b) }),
+  void: (id: string, reason: string) => api<{ ok: true; alreadyVoided: boolean }>(`/cash-drawer/${id}/void`, { method: 'POST', body: JSON.stringify({ reason }) }),
+  exportCsv: (from: string, to: string, scope?: 'all') =>
+    apiBlob(`/cash-drawer/export.csv?from=${from}&to=${to}${scope ? `&clinicId=${scope}` : ''}`),
+};
+
 export const stockAuditApi = {
   list: () => api<StockAuditRow[]>('/stock-audit'),
   current: () => api<StockAuditDetail | null>('/stock-audit/current'),
@@ -1502,7 +1568,10 @@ export interface Bill {
   writeOffReason?: string | null;
   lines: BillLineView[];
   clinic?: ClinicHeader;
-  patient?: { fullName: string; phone?: string | null; identifiers?: { value: string }[] };
+  /** `displayId` is the number to print: the MRN, else the Clinicea file number 97% of patients
+   *  carry instead — resolved on the server (api/src/common/patient-id.ts) so the invoice on
+   *  screen and the accountant's exported invoice can never disagree. */
+  patient?: { fullName: string; phone?: string | null; displayId?: string | null; identifiers?: { kind?: string; value: string }[] };
   /** Who saw the patient, from their encounter at this clinic — null for a walk-in with no visit. */
   practitioner?: string | null;
   practitionerAt?: string | null;
@@ -3630,6 +3699,29 @@ export interface WaThreadRow {
 export interface WaThreadDetail {
   id: string; phone: string; contactName: string | null; patients: WaPatient[];
   window: { open: boolean; expiresAt: string | null; lastInboundAt: string | null }; optedOut: boolean;
+  /** The last "is your query resolved?" round on this chat, if there has been one. */
+  query: WaQuery | null;
+  /**
+   * Set when every registered patient on this number has died. Automatic messages are off — the
+   * server refuses templates and the query flow — but a person may still reply, because whoever
+   * reads it is the family and they are owed an answer. `note` names who died and when.
+   */
+  memorial: { note: string; names: string[] } | null;
+}
+
+export interface WaQuery {
+  id: string;
+  status: 'awaiting' | 'resolved' | 'unresolved' | 'no_answer' | 'cancelled';
+  subject: string;
+  askedAt: string;
+  askedBy: { name: string; role: string | null };
+  answer: 'yes' | 'no' | null;
+  answeredAt: string | null;
+  doctorName: string | null;
+  dueAt: string | null;
+  calledAt: string | null;
+  callNote: string | null;
+  escalated: boolean;
 }
 export interface WaMessage {
   id: string; direction: 'inbound' | 'outbound'; type: string; body: string | null; caption: string | null;
@@ -3667,4 +3759,12 @@ export const whatsappApi = {
       method: 'POST', body: JSON.stringify({ name, language, params, clientId }),
     }),
   media: (messageId: string) => apiBlob(`/whatsapp/messages/${messageId}/media`),
+  // "Is your query resolved?" — asked by a person, answered by the patient with a button.
+  askResolved: (threadId: string, subject: string, clientId: string) =>
+    api<{ asked: boolean; reason?: string; query: WaQuery }>(`/whatsapp/threads/${threadId}/ask-resolved`, {
+      method: 'POST', body: JSON.stringify({ subject, clientId }),
+    }),
+  markCalled: (queryId: string, note?: string) =>
+    api<{ ok: boolean }>(`/whatsapp/queries/${queryId}/called`, { method: 'POST', body: JSON.stringify({ note }) }),
+  cancelQuery: (queryId: string) => api<{ ok: boolean }>(`/whatsapp/queries/${queryId}/cancel`, { method: 'POST' }),
 };
