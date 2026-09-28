@@ -1515,6 +1515,54 @@ export const cashDrawerApi = {
     apiBlob(`/cash-drawer/export.csv?from=${from}&to=${to}${scope ? `&clinicId=${scope}` : ''}`),
 };
 
+// ─── Test advice — the patient's lab slip (28 Sep 2026) ──────────────────────────────────────────
+export interface TestAdviceLine {
+  testId: string | null;
+  name: string;
+  aliases: string[];
+  specimen: string;
+  markers: string[];
+  /** "Hb · RBC · WBC · Platelets · Differential" — null when the test is a single marker. */
+  covers: string | null;
+  dueBy: string | null;
+  dueByLong: string;
+  /** "Do not eat for 10 hours before the test. Water is fine." */
+  fasting: string | null;
+  prepNote: string | null;
+  /** "every 4 weeks" — plain words. */
+  frequency: string | null;
+  /** What the doctor was shown, kept when it differs: "1-2 wks (G4-5)/monthly (G3)". */
+  clinicalFrequency: string | null;
+  intervalDays: number | null;
+}
+export interface TestAdvice {
+  asOf: string; asOfLong: string;
+  patient: { patientId: string; name: string; displayId: string | null; sex: string | null; dob: string | null; phone: string | null; deceased: boolean };
+  clinic: { name: string; address: string | null; phone: string | null } | null;
+  dueBy: string | null; dueByLong: string;
+  /** Get these done. */
+  tests: TestAdviceLine[];
+  /** Then repeat. */
+  schedule: TestAdviceLine[];
+  /** Calculated from the results above — never something to ask a lab for. */
+  derived: string[];
+  oneSample: boolean;
+  fasting: string | null;
+  specimens: string[];
+  markerCount: number;
+  whatsappTests: string;
+  empty: boolean;
+  encounterId?: string;
+  doctor?: string | null;
+  notes?: { label: string; note: string | null }[];
+}
+
+export const testAdviceApi = {
+  forPatient: (patientId: string, horizonDays?: number) =>
+    api<TestAdvice>(`/patients/${patientId}/test-advice${horizonDays != null ? `?horizonDays=${horizonDays}` : ''}`),
+  forEncounter: (encounterId: string) => api<TestAdvice>(`/encounters/${encounterId}/test-advice`),
+};
+
 export const stockAuditApi = {
   list: () => api<StockAuditRow[]>('/stock-audit'),
   current: () => api<StockAuditDetail | null>('/stock-audit/current'),
@@ -3495,6 +3543,16 @@ async function papiUpload<T = any>(path: string, form: FormData): Promise<T> {
 
 export interface SelfRegisterData { phone: string; code: string; fullName: string; sex: string; dob?: string; email?: string; address?: Record<string, unknown>; clinicId: string; category?: string; consentName: string; consentRelation?: string; visitAt: string }
 export interface PublicClinic { id: string; name: string; code: string; address?: string | null; visitingCharge: number; upiId: string; upiName: string; razorpayEnabled: boolean }
+/**
+ * What /portal/public/slots returns. Unlike the signed-in SlotsResponse these are already filtered
+ * to the free ones — a stranger is told what they can book, never what is taken. `horizonDays` is
+ * how far ahead the clinic accepts bookings, so a picker never offers a date the server refuses.
+ */
+export interface PublicSlots {
+  clinic: { id: string; name: string };
+  date: string; closed: boolean; horizonDays: number;
+  slots: { start: string; end: string }[];
+}
 export interface RegistrationInfo {
   appointmentId: string; bookingRef: string; visitAt: string; billId: string; billNumber: string; amount: number;
   upiId: string; upiName: string; razorpayEnabled: boolean; slipUrl: string;
@@ -3544,6 +3602,13 @@ export const portalApi = {
   nextFollowup: () => api<{ dueAt: string; kind: string; clinic: string | null; clinicPhone: string | null } | null>('/portal/next-followup'),
   // public self-service registration (no token)
   publicClinics: () => papi<PublicClinic[]>('/portal/clinics'),
+  /**
+   * Free slots for one clinic on one IST date, before the caller has an account. `register` refuses
+   * a visitAt that is not on the grid, so whatever offers that field has to read this first.
+   * Availability only — it never says who holds the taken ones.
+   */
+  publicSlots: (clinicId: string, date: string) =>
+    papi<PublicSlots>(`/portal/public/slots?clinicId=${encodeURIComponent(clinicId)}&date=${encodeURIComponent(date)}`),
   registerRequestOtp: (phone: string) => papi<{ sent: boolean }>('/portal/register/request-otp', { method: 'POST', body: JSON.stringify({ phone }) }),
   registerVerifyOtp: (phone: string, code: string) => papi<{ valid: boolean }>('/portal/register/verify-otp', { method: 'POST', body: JSON.stringify({ phone, code }) }),
   register: (data: SelfRegisterData) => papi<{ access_token: string; patient: { id: string; name: string }; registration?: RegistrationInfo }>('/portal/register', { method: 'POST', body: JSON.stringify(data) }),

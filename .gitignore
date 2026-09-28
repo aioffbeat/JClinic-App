@@ -30,3 +30,6 @@ ios/
 *.p12
 *.mobileprovision
 .build-log.txt
+
+# personal Claude Code settings (host-scoped deploy permissions)
+.claude/settings.local.json

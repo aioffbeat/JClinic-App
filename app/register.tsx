@@ -23,7 +23,24 @@ const SEXES = [
   { value: 'other', label: 'Other' },
 ] as const;
 
-type Step = 'clinic' | 'phone' | 'code' | 'details';
+type Step = 'clinic' | 'phone' | 'code' | 'when' | 'details';
+
+/** Local YYYY-MM-DD. The server reads the date as IST, which is also the phone's clock here. */
+function isoDate(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function addDays(d: Date, n: number) {
+  const x = new Date(d);
+  x.setDate(x.getDate() + n);
+  return x;
+}
+function dayLabel(iso: string) {
+  const d = new Date(`${iso}T00:00:00`);
+  return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+}
+function timeLabel(iso: string) {
+  return new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+}
 
 export default function Register() {
   const router = useRouter();
@@ -36,12 +53,36 @@ export default function Register() {
   const [f, setF] = useState({ fullName: '', sex: 'female', dob: '', email: '', relation: 'self', signature: '' });
   const set = (k: keyof typeof f) => (v: string) => setF((p) => ({ ...p, [k]: v }));
 
+  // The first visit is booked by this call, so it needs a real slot. Sending "same time tomorrow"
+  // was refused by the server with `outside_hours` for everyone whose tomorrow-at-this-minute did
+  // not happen to land on the grid — which is nearly everyone.
+  const [date, setDate] = useState(() => isoDate(addDays(new Date(), 1)));
+  const [slot, setSlot] = useState<string | null>(null);
+
   const clinics = useQuery({ queryKey: ['portal', 'clinics'], queryFn: () => portalApi.publicClinics() });
+
+  const slots = useQuery({
+    queryKey: ['portal', 'public-slots', clinic?.id, date],
+    queryFn: () => portalApi.publicSlots(clinic!.id, date),
+    enabled: step === 'when' && !!clinic,
+  });
+
+  // publicSlots returns only the free ones — a stranger is told what they can book, never what is
+  // taken. The horizon is the clinic's own, so no date is offered that the server would refuse.
+  const free = slots.data?.slots ?? [];
+  const days = Array.from(
+    { length: Math.min(slots.data?.horizonDays ?? 14, 14) },
+    (_, i) => isoDate(addDays(new Date(), i + 1)),
+  );
 
   function explain(e: unknown): string {
     if (e instanceof ApiError) {
       if (e.status === 429) return e.body?.message ?? 'Too many attempts. Please wait and try again.';
-      if (e.status === 409) return 'This number is already registered — please sign in instead.';
+      // 409 is the slot race now, not a duplicate number: the server books an existing patient onto
+      // their own record rather than refusing them.
+      if (e.status === 409) return e.body?.message ?? 'That time was just taken — please pick another.';
+      // outside_hours / closed / bad_clinic all arrive as 422 and each says what to do.
+      if (e.status === 422) return e.body?.message ?? 'Please check the details and try again.';
       if (e.status === 503) return 'We could not send the code right now. Please try again, or call the clinic.';
       if (e.status === 401) return 'That code is not right, or it has expired.';
       return e.message;
@@ -57,7 +98,7 @@ export default function Register() {
 
   const checkCode = useMutation({
     mutationFn: () => portalApi.registerVerifyOtp(phone.trim(), code.trim()),
-    onSuccess: () => { setError(null); setStep('details'); },
+    onSuccess: () => { setError(null); setStep('when'); },
     onError: (e) => setError(explain(e)),
   });
 
@@ -79,8 +120,8 @@ export default function Register() {
         clinicId: clinic!.id,
         consentName: f.signature.trim(),
         consentRelation: f.relation,
-        // The clinic confirms the actual time; this is the requested day.
-        visitAt: new Date(Date.now() + 86400_000).toISOString(),
+        // A slot the server itself offered, never a time computed here.
+        visitAt: slot!,
         ...device,
       });
     },
@@ -90,7 +131,16 @@ export default function Register() {
       if (withRefresh.refresh_token) await setRefreshToken(withRefresh.refresh_token);
       router.replace('/pay');
     },
-    onError: (e) => setError(explain(e)),
+    onError: (e) => {
+      setError(explain(e));
+      // Someone else took the slot between the picker and this call. Send them back to choose
+      // again with fresh availability, rather than leaving a dead "Create my account" button.
+      if (e instanceof ApiError && (e.status === 409 || e.body?.error === 'outside_hours')) {
+        setSlot(null);
+        setStep('when');
+        slots.refetch();
+      }
+    },
   });
 
   return (
@@ -162,6 +212,45 @@ export default function Register() {
             </Card>
           )}
 
+          {step === 'when' && (
+            <>
+              <Card>
+                <H2>When would you like to come?</H2>
+                <Label>Which day?</Label>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: space.md }}>
+                  <View style={styles.row}>
+                    {days.map((d) => (
+                      <Choice
+                        key={d}
+                        text={dayLabel(d)}
+                        on={date === d}
+                        onPress={() => { setDate(d); setSlot(null); }}
+                      />
+                    ))}
+                  </View>
+                </ScrollView>
+              </Card>
+
+              <Card>
+                <Label>What time?</Label>
+                {slots.isLoading && <Loading />}
+                {slots.data?.closed && <Body muted>The clinic is closed on this day.</Body>}
+                {!slots.isLoading && !slots.data?.closed && !free.length && (
+                  <Body muted>No free times left on this day — try another.</Body>
+                )}
+                <View style={[styles.row, { marginTop: space.md }]}>
+                  {free.map((s) => (
+                    <Choice key={s.start} text={timeLabel(s.start)} on={slot === s.start} onPress={() => setSlot(s.start)} />
+                  ))}
+                </View>
+                {slots.isError && (
+                  <Notice title="Cannot load times" body="You may be offline. Try again once you reconnect." tone="bad" />
+                )}
+                <Button title="Continue" onPress={() => setStep('details')} disabled={!slot} />
+              </Card>
+            </>
+          )}
+
           {step === 'details' && (
             <>
               <Card>
@@ -222,6 +311,7 @@ export default function Register() {
                   disabled={f.fullName.trim().length < 2 || f.signature.trim().length < 2}
                 />
                 <Caption>
+                  {slot ? `Your visit: ${dayLabel(date)} at ${timeLabel(slot)}. ` : ''}
                   {`A visiting charge of ₹${clinic?.visitingCharge ?? ''} confirms your first appointment. You pay on the next screen.`}
                 </Caption>
               </Card>
