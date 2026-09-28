@@ -28,6 +28,9 @@ const config: ExpoConfig = {
   ios: {
     bundleIdentifier: `in.drjoshis.jclinic.patient${SUFFIX}`,
     supportsTablet: false,
+    // The app only uses HTTPS/TLS from the OS, which is exempt. Declaring it here answers App Store
+    // Connect's export-compliance question once, instead of on every uploaded build.
+    config: { usesNonExemptEncryption: false },
     infoPlist: {
       // Every string here is shown verbatim in the OS permission dialog, and App Review reads them.
       // Say what the app does with the data, not what the API is called.

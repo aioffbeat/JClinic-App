@@ -19,6 +19,8 @@
     "build:apk": "eas build --platform android --profile preview",
     "build:ios": "eas build --platform ios --profile preview",
     "build:play": "eas build --platform android --profile production",
+    "build:appstore": "eas build --platform ios --profile production",
+    "submit:appstore": "eas submit --platform ios --profile production --latest",
     "build:apk:arm64": "eas build --platform android --profile preview-arm64"
   },
   "dependencies": {

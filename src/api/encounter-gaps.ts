@@ -43,16 +43,19 @@ export const REQUIRED_BY_TYPE: Record<string, GapKey[]> = {
 
 /** Mirrors STRICT_REQUIRED — every section except Progress, in the order the tabs are worked. */
 export const STRICT_REQUIRED: GapKey[] = [
-  'vitals', 'ayurveda', 'note', 'diagnosis', 'tests', 'files', 'meds', 'diet', 'prescription',
+  'vitals', 'ayurveda', 'note', 'diagnosis', 'meds', 'diet', 'prescription',
 ];
 /** Mirrors STRICT_FROM. Visits started before it keep the old four-section rule AND free tab
  *  navigation — sequencing and the mandatory sections turn on together. */
 export const STRICT_FROM = new Date('2026-08-12T12:45:00+05:30');
 
 /** Mirrors STRICT_REQUIRED_V2 — the diagnosis-first order, with History and Treatment plan.
- *  LIVE since 12:45 IST 14 Aug 2026; the API constant is authoritative and the two move together. */
+ *  LIVE since 12:45 IST 14 Aug 2026; the API constant is authoritative and the two move together.
+ *  Tests and Files came out on 1 Sep 2026 — if this list and the API's ever disagree, the screen
+ *  tells a doctor a section is missing that the server will happily conclude without, or worse the
+ *  other way round. */
 export const STRICT_REQUIRED_V2: GapKey[] = [
-  'vitals', 'ayurveda', 'diagnosis', 'history', 'note', 'plan', 'tests', 'files', 'meds', 'diet', 'prescription',
+  'vitals', 'ayurveda', 'diagnosis', 'history', 'note', 'plan', 'meds', 'diet', 'prescription',
 ];
 export const STRICT_V2_FROM = new Date('2026-08-14T12:45:00+05:30');
 

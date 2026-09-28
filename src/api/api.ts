@@ -125,6 +125,23 @@ export async function api<T = any>(path: string, options: RequestInit = {}): Pro
   return body as T;
 }
 
+/** Binary download — same auth/clinic headers as api(); returns the blob and the server's filename. */
+export async function apiBlob(path: string): Promise<{ blob: Blob; filename: string | null }> {
+  const headers: Record<string, string> = {};
+  const token = getToken();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const clinic = getClinic();
+  if (clinic) headers['X-Clinic-Id'] = clinic;
+  const res = await fetch(`${P().baseUrl}/v1${path}`, { headers });
+  if (!res.ok) {
+    let body: any = null; try { body = await res.json(); } catch { /* not json */ }
+    throw new ApiError(res.status, body);
+  }
+  const cd = res.headers.get('Content-Disposition') ?? '';
+  const m = cd.match(/filename="?([^";]+)"?/);
+  return { blob: await res.blob(), filename: m ? m[1] : null };
+}
+
 /** Multipart upload — same auth/clinic headers as api(), but Content-Type is left for the
  *  browser to set (it needs the multipart boundary, which we can't set by hand). */
 export async function apiUpload<T = any>(path: string, form: FormData): Promise<T> {
@@ -217,6 +234,25 @@ export interface PatientSummary {
   abhaId?: string | null;
   allergies: { substance: string; reaction?: string; severity?: string }[];
   homeClinic?: HomeClinicTag | null;
+  /** Chain-wide deceased mark (8 Sep 2026). The record stays readable; outreach stops. */
+  deceasedAt?: string | null;
+  deceasedNote?: string | null;
+  deceasedByName?: string | null;
+  /** For Edit details (17 Sep 2026). loginPhone is null when the login key is a shared-number placeholder. */
+  loginPhone?: string | null;
+  contactPhone?: string | null;
+  address?: { line?: string; city?: string; state?: string; pincode?: string } | null;
+  category?: string | null;
+  referredBy?: string | null;
+  source?: string | null;
+  editCount?: number;
+  lastEdit?: { at: string; by: string | null } | null;
+}
+/** One row of a patient's change history — who, when, which clinic, old → new, and the note. */
+export interface PatientChange {
+  id: string; at: string; action: string;
+  actorName: string | null; clinicName: string | null;
+  before: unknown; after: unknown; note: string | null;
 }
 /**
  * A patient row as the server actually returns it — from `/patients` (search) and from
@@ -237,6 +273,8 @@ export interface PatientListItem {
   category?: string | null;
   createdAt?: string;
   homeClinic?: HomeClinicTag | null;
+  /** Set when the patient is marked deceased — every picker badges it so nobody books or bills by accident. */
+  deceasedAt?: string | null;
 }
 
 /** Registration directory: ranged counts + a chart series + the patients registered in the window. */
@@ -300,7 +338,7 @@ export const authApi = {
 };
 
 // ---- Admin console (multi-clinic, users, roles, permission matrix) ----
-export interface ClinicRow { id: string; code: string; name: string; timezone?: string; gstin?: string | null; address?: string | null; phone?: string | null; isActive: boolean; circle?: { id: string; name: string } }
+export interface ClinicRow { id: string; code: string; name: string; timezone?: string; gstin?: string | null; address?: string | null; phone?: string | null; isActive: boolean; isHeadOffice?: boolean; circle?: { id: string; name: string } }
 export interface AdminUserRow {
   id: string; fullName: string; email: string | null; phone: string | null; isActive: boolean;
   ozonetelAgentId: string | null;
@@ -321,7 +359,7 @@ export interface EffectivePerms {
 }
 
 export const clinicsApi = {
-  mine: () => api<{ id: string; code: string; name: string }[]>('/clinics/mine'),
+  mine: () => api<{ id: string; code: string; name: string; isHeadOffice?: boolean }[]>('/clinics/mine'),
   list: () => api<ClinicRow[]>('/clinics'),
   create: (data: unknown) => api<ClinicRow>('/clinics', { method: 'POST', body: JSON.stringify(data) }),
   update: (id: string, data: unknown) => api<ClinicRow>(`/clinics/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
@@ -461,16 +499,26 @@ export const patientsApi = {
       method: 'PATCH',
       body: JSON.stringify({ category }),
     }),
+  /** Mark deceased from the hub (patients:edit). Same server path as the overdue desk's stage. */
+  markDeceased: (id: string, note?: string) =>
+    api<{ deceasedAt: string; deceasedNote: string | null; closedLeads: number; already: boolean }>(`/patients/${id}/deceased`, { method: 'POST', body: JSON.stringify({ note }) }),
+  /** "Marked in error" — patients:delete (admin by default); a reason is required. */
+  unmarkDeceased: (id: string, reason: string) =>
+    api<{ ok: boolean }>(`/patients/${id}/deceased`, { method: 'DELETE', body: JSON.stringify({ reason }) }),
   /** Correct name / dialable phone (audited). Still narrow: never dob/sex, never the login phone. */
-  updateDetails: (id: string, data: { fullName?: string; phone?: string }) =>
-    api<{ id: string; fullName: string; contactPhone: string | null }>(`/patients/${id}/details`, {
+  /** Edit patient details — only changed fields, plus the required note. Returns the refreshed summary. */
+  history: (id: string) => api<PatientChange[]>(`/patients/${id}/change-history`),
+  updateDetails: (id: string, data: Record<string, unknown> & { reason: string }) =>
+    api<PatientSummary>(`/patients/${id}/details`, {
       method: 'PATCH',
       body: JSON.stringify(data),
     }),
   register: (data: unknown) =>
     api<any>('/patients', { method: 'POST', body: JSON.stringify(data) }),
   summary: (id: string) => api<PatientSummary>(`/patients/${id}/summary`),
-  sendOtp: (phone: string) => api<{ sent: boolean; expiresInSec: number }>('/patients/otp/send', { method: 'POST', body: JSON.stringify({ phone }) }),
+  /** Free camp v2: is this patient new (no bill yet) and not yet given it? (doctor's panel) */
+  freeCamp: (id: string) => api<FreeCampStatus>(`/patients/${id}/free-camp`),
+  sendOtp: (phone: string, smsOnly = false) => api<{ sent: boolean; expiresInSec: number; channels?: ('sms' | 'whatsapp')[] }>('/patients/otp/send', { method: 'POST', body: JSON.stringify(smsOnly ? { phone, smsOnly } : { phone }) }),
   verifyOtp: (phone: string, code: string) => api<{ verified: boolean }>('/patients/otp/verify', { method: 'POST', body: JSON.stringify({ phone, code }) }),
   dashboard: (id: string) => api<PatientDashboard>(`/patients/${id}/dashboard`),
   insights: (id: string) => api<PatientInsights>(`/patients/${id}/insights`),
@@ -782,6 +830,13 @@ export interface VisitRecord {
   endedReason: string | null;
   endedNote: string | null;
   endedByName: string | null;
+  /**
+   * Who filled each section, resolved to names server-side. `updatedBy` is present only when
+   * somebody OTHER than the first author changed it — on a visit one doctor wrote alone every
+   * entry is just a `filledBy`, and showing "filled by X, updated by X" would be noise.
+   */
+  filledBy?: Partial<Record<'note' | 'ayurveda' | 'diet' | 'history' | 'plan' | 'vitals' | 'diagnosis',
+    { filledBy: string | null; updatedBy: string | null } | null>>;
   type: string | null;
   clonedFromId: string | null;
   followUpOfId: string | null;
@@ -970,7 +1025,18 @@ export const emrApi = {
   reopen: (id: string) => api<{ id: string; endedAt: null }>(`/encounters/${id}/reopen`, { method: 'POST', body: JSON.stringify({}) }),
   /** "Save for later": remember the tab the doctor paused on; Resume lands there. */
   park: (id: string, tab: string, note?: string) => api<{ id: string; parkedAt: string; parkedTab: string | null; parkedNote: string | null }>(`/encounters/${id}/park`, { method: 'POST', body: JSON.stringify({ tab, note }) }),
+
+  /** The follow-up window, per clinic. admin:edit on both verbs — see EmrController. */
+  followUpWindow: () => api<FollowUpWindow>('/encounters/rules/follow-up-window'),
+  setFollowUpWindow: (body: { enabled?: boolean; windowDays?: number }) =>
+    api<FollowUpWindow>('/encounters/rules/follow-up-window', { method: 'PUT', body: JSON.stringify(body) }),
 };
+
+/**
+ * Ships ON at 30 days, unlike every other rule config in this file — so a card rendering it has to
+ * invert the usual polarity: green is ON here, and the warning belongs on the OFF state.
+ */
+export interface FollowUpWindow { clinicId: string; enabled: boolean; windowDays: number }
 export interface IncompleteEncounter {
   id: string;
   startedAt: string;
@@ -1010,9 +1076,15 @@ export interface DietChart {
 
 // ---- prescriptions ----
 export interface RxItem {
-  id: string; medicineId?: string | null; medicine?: { name: string } | null;
+  id: string; medicineId?: string | null; medicine?: { name: string; type?: string | null } | null;
   drugText?: string | null; dose?: string | null; frequency?: string | null;
   durationDays?: number | null; dispensedQty: string | number;
+  /** A SERVICE line — exactly one of medicineId / drugText / serviceId is set. `sittings` is
+   *  its course length, the counterpart of durationDays. */
+  serviceId?: string | null; service?: { name: string; type?: string | null; price?: string | number } | null;
+  sittings?: number | null; instructions?: string | null;
+  /** Units to bill — the doctor's number; the counter cannot change it. Null = derived from frequency x days. */
+  billQty?: number | null;
 }
 export interface Prescription {
   id: string; status: string; signedAt?: string | null; createdAt?: string;
@@ -1020,6 +1092,10 @@ export interface Prescription {
   clinic?: ClinicHeader;
   patient?: { id: string; fullName: string; sex?: string; dob?: string | null; phone?: string | null };
   prescriber?: { fullName: string } | null;
+  /** Who signed it — the one person who may still edit it after signing. */
+  prescriberId?: string;
+  /** The doctor's free-camp tick (11 Sep 2026): a new patient's script billed at ₹0, once. */
+  freeCamp?: boolean; freeCampBy?: string | null;
   packageRecs?: { id: string; packageId: string; note?: string | null; status: string; package: { name: string; kind: string; price: string | number; durationMonths?: number | null } }[];
 }
 export interface AddItemResult {
@@ -1028,12 +1104,16 @@ export interface AddItemResult {
   item?: RxItem;
 }
 
-export interface PendingRx { prescriptionId: string; patientId: string; patient: string; phone: string; prescriber?: string | null; createdAt: string; items: string[]; estTotal: number }
+export interface PendingRx { prescriptionId: string; patientId: string; patient: string; phone: string; prescriber?: string | null; createdAt: string; signedAt?: string | null; items: string[]; estTotal: number }
 /** A prescription the doctor has signed. Read-only; reception never sees unsigned drafts. */
 export interface SignedRx {
   id: string; patientId: string; patient: string; phone: string | null;
   prescriber: string | null; signedAt: string | null; createdAt: string; status: string;
   itemCount: number; items: string[];
+  /** Who signed it — only they may delete it. */
+  prescriberId: string;
+  /** "Medicine qty" for lines already dispensed. */
+  dispensed: string[];
 }
 export interface RxFavourite { id: string; medicineId: string; dose?: string | null; frequency?: string | null; durationDays?: number | null; medicine?: { name: string } }
 
@@ -1065,6 +1145,11 @@ export const prescriptionsApi = {
   removeItem: (id: string, itemId: string) =>
     api<{ removed: string; name: string }>(`/prescriptions/${id}/items/${itemId}`, { method: 'DELETE' }),
   sign: (id: string, signature: string) => api(`/prescriptions/${id}/sign`, { method: 'PUT', body: JSON.stringify({ signature }) }),
+  /** Delete a whole signed prescription — its signer only. Dispensed, unbilled medicine goes back to stock. */
+  remove: (id: string) =>
+    api<{ deleted: string; stockReturned: { name: string; qty: number }[]; stockNotReturned: { name: string; qty: number }[] }>(`/prescriptions/${id}`, { method: 'DELETE' }),
+  /** The free-camp tick — the server refuses with the reason when the patient or the script does not fit. */
+  setFreeCamp: (id: string, on: boolean) => api<Prescription>(`/prescriptions/${id}/free-camp`, { method: 'PUT', body: JSON.stringify({ on }) }),
   dispense: (id: string, items: { itemId: string; qty: number }[]) =>
     api(`/prescriptions/${id}/dispense`, { method: 'POST', body: JSON.stringify({ items }) }),
   recommendPackage: (id: string, packageId: string, note?: string) => api(`/prescriptions/${id}/packages`, { method: 'POST', body: JSON.stringify({ packageId, note }) }),
@@ -1256,7 +1341,16 @@ export interface RecomputeLevelsResult {
 }
 
 // ---- services (M10) ----
-export interface ServiceRow { id: string; name: string; type?: string | null; providerRole?: string | null; price: string | number; durationMin?: number | null; isActive?: boolean }
+export interface ServiceRow {
+  id: string; name: string; type?: string | null; providerRole?: string | null; price: string | number;
+  durationMin?: number | null; defaultSittings?: number | null; isActive?: boolean;
+  /** The amount is typed on each bill; `price` means nothing for such a row (19 Sep 2026). */
+  priceAtCounter?: boolean;
+  /** Not healthcare, so not exempt — courier is 18. Null/absent keeps the exemption. */
+  gstRate?: number | null;
+  /** Printed against this line on a tax invoice. Courier services are 996812. */
+  hsnSac?: string | null;
+}
 export interface BomRow { medicineId: string; medicine: string; qty: number }
 export interface DeliveryRow { id: string; cost?: string | number | null; deliveredAt: string; service?: { name: string; price: string | number }; patient?: { fullName: string }; provider?: { fullName: string } | null }
 
@@ -1396,6 +1490,10 @@ export interface Bill {
   /** Paise added to round the total UP to a whole rupee (0 when none). */
   roundOff?: number | string | null; gstin?: string | null; createdAt?: string; discountTotal?: string | number;
   discountPct?: string | number; discountApproval?: string;
+  /** Value given free under the free camp (kept off `total`, not a discount). */
+  concessionTotal?: string | number; concessionKind?: string | null;
+  /** 'protocol' when the medicines were GST-free because the patient holds a treatment protocol. */
+  gstExemptReason?: string | null;
   paidAmount?: string | number;
   /** Balance the clinic gave up collecting. The invoice still shows the ORIGINAL total — this is
    *  shown as its own line so a closed bill never prints "balance due". */
@@ -1423,6 +1521,8 @@ export interface BillLineItem {
   id: string; description: string; sourceType: string;
   qty: string | number; unitPrice: string | number; discount: string | number;
   gstRate: string | number; amount: string | number;
+  /** Rupees of this line given free under the free camp; `amount` is already net of it. */
+  concessionAmount?: string | number;
   /** Rupees of this line the protocol paid; `amount` is already net of it. */
   coveredAmount?: string | number;
   packageSaleId?: string | null;
@@ -1432,6 +1532,9 @@ export interface BillListItem {
   discountTotal?: string | number; taxTotal?: string | number;
   payState: string; dueDate?: string | null; createdAt: string;
   writeOffAmount?: string | number; writtenOffAt?: string | null; writeOffReason?: string | null;
+  concessionTotal?: string | number; concessionKind?: string | null;
+  /** 'protocol' when the medicines were GST-free because the patient holds a treatment protocol. */
+  gstExemptReason?: string | null;
   pendingChange?: PendingBillChange; clinic?: HomeClinicTag | null;
   lines?: BillLineItem[];
   coveredTotal?: string | number;
@@ -1487,9 +1590,22 @@ export interface DuesSummary {
 export interface SuggestedLine { sourceType: string; sourceId?: string; description: string; qty: number; unitPrice: number; gstRate: number }
 export interface BillablePack { id: string; label: string; packSize: number; unit: string; salePrice: number; gstRate: number; hsnSac?: string | null; onHand: number }
 export interface BillableMedicine { id: string; name: string; type?: string | null; salePrice: number; gstRate: number; hsnSac?: string | null; onHand: number; packs?: BillablePack[] }
-export interface BillableService { id: string; name: string; type?: string | null; price: number; gstRate: number }
+export interface BillableService {
+  id: string; name: string; type?: string | null; price: number; gstRate: number;
+  /** The counter types the amount for this one — the picker says so and the Rate box starts blank. */
+  priceAtCounter?: boolean;
+  hsnSac?: string | null;
+}
 export interface BillCatalog { medicines: BillableMedicine[]; services: BillableService[] }
-export interface BillableLine { sourceType: string; sourceId?: string; description: string; qty: number; unitPrice: number; gstRate: number; hsnSac?: string | null }
+export interface BillableLine { sourceType: string; sourceId?: string; description: string; qty: number; unitPrice: number; gstRate: number; hsnSac?: string | null; /** The signed prescription a prescription_item line belongs to. */ prescriptionId?: string; /** Catalogue medicine behind a prescription line, and its on-hand at this clinic (10 Sep 2026). */ medicineId?: string | null; onHand?: number | null; /** When the doctor signed the script this line came from. Not a filter — the counter just says how old it is. */ signedAt?: string | null }
+/** The free camp v2 (11 Sep 2026): is this patient new (no bill yet) and not yet given it, and the caps. */
+export interface FreeCampStatus {
+  eligible: boolean; reason: string; usedAt?: string | null; usedBillNumber?: string | null;
+  /** The bill that makes the patient not new, when reason is 'billed'. */
+  billedNumber?: string | null; billedAt?: string | null;
+  maxLines: number; maxValue: number;
+}
+export interface FreeCampRule { clinicId: string; enforce: boolean; maxLines: number; maxValue: number; hardMaxLines: number }
 /**
  * `clinical` is the prescription-required gate's answer for THIS patient, computed before the
  * operator has added a line. `ok` false means a bill of anything but consultation will be refused.
@@ -1500,13 +1616,25 @@ export interface Billables {
   clinical?: {
     enforced: boolean;
     ok: boolean;
+    /** Why — 'rx_unsigned' means a draft exists but the doctor has not signed it. */
+    reason?: string;
     windowDays: number;
     lastPrescriptionAt: string | null;
     lastPrescriber: string | null;
+    unsignedAt?: string | null;
+    unsignedPrescriber?: string | null;
   };
   /** The 25% rule, so the counter can stop a discount being typed rather than refuse it at Save. */
-  discountCeiling?: { enforced: boolean; maxPct: number };
+  discountCeiling?: { enforced: boolean; maxPct: number; /** Who may approve ABOVE the ceiling (12 Sep 2026); empty = nobody, the bill is refused. */ approverNames?: string[] };
+  /** Present only when an offered signed prescription carries the doctor's free-camp tick: the verdict, which prescriptions are free, and the cap. */
+  freeCamp?: (FreeCampStatus & { freeRxIds: string[]; violation: string | null }) | null;
+  /** Protocol patients pay no GST on medicines (10 Sep 2026) — the server will charge 0 on every medicine line. */
+  protocolGstExempt?: boolean;
+  /** The no-negative-stock block at this clinic and the chain-wide exempt list, so a line the block will refuse is flagged before Save. */
+  stockBlock?: { enforce: boolean; exemptMedicineIds: string[] };
 }
+/** The no-negative-stock billing block: chain rule + this clinic's override + the exempt list. */
+export interface InventoryBlockRule { clinicId: string; enforce: boolean; clinicOverride: boolean | null; chainEnforce: boolean; exemptMedicineIds: string[]; exemptMedicines: { id: string; name: string }[] }
 
 /** A row of the Deleted bills register — read from bill_archive, where voided bills are stored separately. */
 export interface VoidedBill {
@@ -1530,7 +1658,7 @@ export interface DaySheet {
   byMethod: { method: string; count: number; amount: number }[];
   payments: { at: string; method: string; amount: number; reference: string | null; bill: string; patient: string }[];
   refunds: { at: string; amount: number; reason: string | null; bill: string }[];
-  billsRaised: { count: number; gross: number; tax: number; discount: number };
+  billsRaised: { count: number; gross: number; tax: number; discount: number; freeCamp?: number };
   voided: { number: string; total: number; patient: string; reason: string | null; at: string }[];
 }
 
@@ -1618,15 +1746,17 @@ export const billingApi = {
     api<{ approverRole: string; caps: Record<string, number> }>('/bills/rules/discount-limits', { method: 'PUT', body: JSON.stringify(data) }),
   /** No-negative-stock billing block, per clinic. Off by default; a clinic's first signed monthly
    *  audit turns it on automatically — this is the read + admin manual override. */
-  inventoryBlock: () => api<{ clinicId: string; enforce: boolean }>('/bills/rules/inventory-block'),
-  /** Prescription-required billing, per clinic. Ships off — see prescription-gate.ts. */
+  inventoryBlock: () => api<InventoryBlockRule>('/bills/rules/inventory-block'),
+  /** The free camp rule (chain-wide): at most N medicines, whole bill within the value cap. */
+  freeCamp: () => api<FreeCampRule>('/bills/rules/free-camp'),
+  setFreeCamp: (body: { enforce?: boolean; maxLines?: number; maxValue?: number }) => api<FreeCampRule>('/bills/rules/free-camp', { method: 'PUT', body: JSON.stringify(body) }),
   rxGate: () => api<{ clinicId: string; enforce: boolean; windowDays: number }>('/bills/rules/prescription-required'),
   setRxGate: (body: { enforce?: boolean; windowDays?: number }) =>
     api<{ clinicId: string; enforce: boolean; windowDays: number }>('/bills/rules/prescription-required', { method: 'PUT', body: JSON.stringify(body) }),
   discountCeiling: () => api<DiscountCeiling>('/bills/rules/discount-ceiling'),
-  setDiscountCeiling: (body: { enforce?: boolean; maxPct?: number }) =>
+  setDiscountCeiling: (body: { enforce?: boolean; maxPct?: number; approverUserIds?: string[] }) =>
     api<DiscountCeiling>('/bills/rules/discount-ceiling', { method: 'PUT', body: JSON.stringify(body) }),
-  setInventoryBlock: (enforce: boolean) => api<{ clinicId: string; enforce: boolean }>('/bills/rules/inventory-block', { method: 'PUT', body: JSON.stringify({ enforce }) }),
+  setInventoryBlock: (body: { enforce?: boolean; scope?: 'clinic' | 'chain'; exemptMedicineIds?: string[] }) => api<InventoryBlockRule>('/bills/rules/inventory-block', { method: 'PUT', body: JSON.stringify(body) }),
 };
 
 // Unified checkout — medicines + services + packages + prescription → ONE bill.
@@ -1640,6 +1770,12 @@ export interface VisitSlipData {
   patient: { name: string; phone?: string | null; sex?: string | null; dob?: string | null; mrn?: string | null };
   clinic: { name: string; address?: string | null; phone?: string | null };
   amount?: number | null; paidAmount?: number | null; billNumber?: string | null;
+  /** physical | online — decides whether this slip shows a venue or a join link. */
+  mode?: string | null;
+  /** Only ever set for an online consultation, and only once the link exists. */
+  joinUrl?: string | null;
+  /** Null until the desk assigns somebody; the slip is a live view, so it fills in by itself. */
+  doctor?: string | null;
 }
 /** What the public landing page is allowed to know. `stats` is null below the small-sample floor. */
 export interface PublicTestimonials {
@@ -1665,22 +1801,37 @@ export const publicApi = {
 // ---- CRM / leads (M14/M15) ----
 export interface LeadRow {
   id: string; fullName: string; phone: string; email?: string | null;
+  /** The category. On the row because the Partially qualified section is about its absence. */
+  diseaseInterest?: string | null;
+  /** The two 48-hour clocks, derived server-side. Null once the thing they wait for has happened —
+   *  a lead that converted in an hour carries no deadline, and a resolved breach is history. */
+  qualifyDueAt?: string | null; qualifyBreached?: boolean;
+  convertDueAt?: string | null; convertBreached?: boolean;
   /** Where the lead came from — admin-only. The API returns null for these on every non-admin
    *  login, so the desk sees the enquiry, never the ad spend behind it. */
   source?: string | null; sourceDetail?: string | null;
   campaignName?: string | null; adName?: string | null; landingUrl?: string | null;
   status: string; owner?: string | null; ownerId?: string | null;
+  /** The query flag (18 Sep 2026): this number already belongs to a registered patient, so the row
+   *  is a question to answer — not a lead, and never a conversion, in any count. */
+  queryAt?: string | null; queryPatientId?: string | null; queryResolvedAt?: string | null;
   nextActionAt?: string | null; createdAt: string; overdue: boolean; convertedPatientId?: string | null;
+  /** "Someone else visited": when a relative registered instead, who they are to the enquirer and
+   *  which record the lead was linked to. Both absent on an ordinary conversion. */
+  convertedAt?: string | null; convertedRelation?: string | null;
+  convertedPatient?: { id: string; fullName: string } | null;
   callStatus?: string | null; appointmentAt?: string | null;
   lostReason?: string | null;
-  /** The lead's most recent free-text note, for the table's Note column (null when it has none). */
+  /** The last note a PERSON wrote — a typed note or a call outcome, never a system reminder.
+   *  Null when nobody who rang has written anything yet. See api leads/lead-note.ts. */
   lastNote?: string | null;
+  lastNoteBy?: string | null;
+  lastNoteAt?: string | null;
   /** Triage: null = still with the telecalling team; set when a telecaller sent it to a clinic. */
   routedToClinicAt?: string | null;
   /** Who routed it. Null on backfilled/auto leads — those may still be routed by any telecaller. */
   routedById?: string | null;
   /** Make's clinic hint — preselects the Send-to-clinic dropdown, never auto-routes. */
-  suggestedClinicId?: string | null;
   /** Set once someone marks this lead junk — who, so the junk-review worklist has context. */
   junkMarkedBy?: string | null; junkMarkedAt?: string | null;
   /** A registered patient carrying this lead's number (chain-wide) — shown in place of the
@@ -1694,10 +1845,13 @@ export interface LeadRow {
   /** Response SLA. `slaBreached` is computed server-side so the rule and the badge can never disagree. */
   responseDueAt?: string | null; respondedAt?: string | null; slaBreached?: boolean;
   appointmentClinicId?: string | null;
+  /** The clinic that OWNS the lead — what "Move to another clinic" changes. Distinct from
+   *  appointmentClinicId, which only says where a booking was made. */
+  clinicId?: string | null;
   /** Set automatically when the patient actually attended — matched on phone number. */
   visitedAt?: string | null;
 }
-export type LeadRuleKind = 'lead_assignment' | 'lead_sla' | 'lead_followup' | 'lead_transfer' | 'call_targets' | 'lead_response_sla';
+export type LeadRuleKind = 'lead_assignment' | 'lead_sla' | 'lead_followup' | 'lead_transfer' | 'call_targets' | 'lead_response_sla' | 'lead_conversion_sla';
 
 /** How long the desk has to attend a lead. Times are IST 'HH:MM'; workingDays are 0=Sun…6=Sat. */
 export interface ResponseSlaConfig {
@@ -1714,27 +1868,79 @@ export interface LevelPerson {
   received: number; qualified: number; pending: number;
   slaMet: number; slaBreached: number; slaPct: number;
   medianMinutes: number | null;
-  junkMarked: number; junkReopened: number;
+  junkMarked: number;
   contacted: number; followUps: number; appointments: number;
   visited: number; converted: number; lost: number; conversionPct: number;
+  /** Queries answered — existing patients' questions, excluded from every column above. */
+  queries?: number; queriesOpen?: number;
 }
 export interface LeadProductivity {
   range: { from: string; to: string; clamped: boolean };
   scope: string;
-  levels: { level: 1 | 2; people: LevelPerson[]; totals: Omit<LevelPerson, 'userId' | 'name'> }[];
+  levels: { level: 1 | 2 | 3; people: LevelPerson[]; totals: Omit<LevelPerson, 'userId' | 'name'> }[];
   /** Unattended leads whose deadline has already passed — the number to act on right now. */
   liveBreaches: number;
+  /** Existing patients' questions handled in the window — not leads, counted nowhere else. */
+  queries?: { total: number; open: number };
+}
+
+/** One lead behind a productivity number (21 Sep 2026). Source/campaign are null for non-admins. */
+export interface ProductivityLeadRow {
+  id: string; name: string; phone: string; clinic: string | null; status: string; level: number | null;
+  source: string | null; campaign: string | null;
+  l1By: string | null; l2By: string | null;
+  arrivedAt: string | null; respondedAt: string | null; responseDueAt: string | null;
+  /** How the response clock ended — explains In time / Late, including leads Late counts that are not due yet. */
+  response: 'in_time' | 'late' | 'overdue' | 'not_yet_due' | 'not_measured';
+  appointmentAt: string | null; visitedAt: string | null; nextActionAt: string | null;
+  isQuery: boolean; queryResolvedAt: string | null;
+  lastNote: string | null; lastNoteBy: string | null; lastNoteAt: string | null;
+  /** Cancer, CKD, Lifestyle… — recorded on the lead, or read from the ad when nothing was recorded. */
+  category: string | null; categoryFromAd: boolean;
+  /** How many notes a person has written on this lead. */
+  noteCount: number;
+}
+export interface ProductivityLeadNotes {
+  lead: { id: string; name: string; phone: string };
+  notes: { id: string; kind: 'note' | 'call'; body: string; level: number | null; author: string | null; at: string | null }[];
+}
+export interface ProductivityLeadList {
+  cut: string; level: number | null; person: string;
+  total: number; limit: number; offset: number; truncated: boolean;
+  rows: ProductivityLeadRow[];
+}
+
+/**
+ * A patient the system suspects belongs to this enquiry's household — a relative or a second
+ * number. `redacted` means the viewer lacks patients:view, so the row says there is something to
+ * ask about without naming anybody.
+ */
+export interface LeadMatchSuggestion {
+  id: string;
+  patientId: string | null; patientName: string | null; patientPhone: string | null;
+  patientMrn: string | null; patientClinic: string | null;
+  registeredAt: string;
+  /** The shared name and how many patients in the whole register carry it — the reason to believe. */
+  token: string; tokenHolders: number; sameClinic: boolean; redacted: boolean;
 }
 
 /** Signals from the phone-dedupe gate in leads.create() — same number, no duplicate row created. */
 export interface LeadCreateResult extends Partial<LeadRow> {
   deduped?: boolean; reopened?: boolean; isPatient?: boolean; existingPatientId?: string | null; leadId?: string;
 }
-export interface LeadFunnel { total: number; new: number; junk: number; contacted: number; followUp: number; appointment: number; visited: number; lost: number; converted: number; overdue: number; junkReview: number; conversionRate: number; triage: number; slaDue: number; escalated?: number; byLevel?: Record<number, number>; /** Arrived today on the IST calendar, whatever stage they are at now. */ newToday?: number }
+export interface LeadFunnel { total: number; new: number; junk: number; contacted: number; followUp: number; appointment: number; visited: number; lost: number; deceased?: number; converted: number; /** Enquiries from numbers already registered as patients — excluded from every lead and conversion count. */ queries?: number; queriesOpen?: number; overdue: number; conversionRate: number; triage: number; slaDue: number; escalated?: number; byLevel?: Record<number, number>; /** Arrived today on the IST calendar, whatever stage they are at now. */ newToday?: number; /** The three worklist sections added 1 Sep 2026 — each counted with the predicate its list filters on. */ partiallyQualified?: number; underAttempts?: number; pendingConversion?: number }
+/** Who the visitor is to the enquirer — keep in step with LEAD_RELATIONS in the api's lead-constants.ts. */
+export const LEAD_RELATIONS = ['father', 'mother', 'spouse', 'son', 'daughter', 'sibling', 'other_family', 'friend'] as const;
+export const LEAD_RELATION_LABEL: Record<string, string> = {
+  father: 'Father', mother: 'Mother', spouse: 'Spouse', son: 'Son', daughter: 'Daughter',
+  sibling: 'Brother or sister', other_family: 'Other family member', friend: 'Friend',
+};
 export interface LeadActivityRow { id: string; type: string; body: string; createdAt: string; user?: { fullName: string } | null }
 export interface DueFollowup { id: string; fullName: string; phone: string; status: string; owner?: string | null; nextActionAt?: string | null; overdue: boolean }
 export interface LeadCall {
   id: string; leadId?: string | null; direction: string; provider: string; status: string; disposition?: string | null;
+  /** Our normalised result: connected | no_answer | agent_no_answer | agent_unavailable | dial_failed | invalid_number. */
+  outcome?: string | null;
   durationSec?: number | null; talkTimeSec?: number | null; hasRecording: boolean; agent?: string | null; startedAt: string;
 }
 /** An existing patient who rang in and is waiting for a clinic to call them back. */
@@ -1762,9 +1968,14 @@ export interface LeadPatientCallback {
 }
 
 export interface LeadDetail extends LeadRow {
-  ownerId?: string | null; lostReason?: string | null;
+  ownerId?: string | null; lostReason?: string | null; convertedNote?: string | null;
   area?: string | null; diseaseInterest?: string | null; gender?: string | null; age?: number | null;
   externalRef?: string | null; utm?: Record<string, string> | null;
+  /** Query detail, resolved server-side (the patient may have changed their number since). */
+  queryNote?: string | null; queryResolvedNote?: string | null;
+  /** The call list is capped at 20 — this says so, so the header can read "20+". */
+  callsTruncated?: boolean;
+  queryPatientName?: string | null; queryResolvedByName?: string | null;
   activities: LeadActivityRow[];
   calls?: LeadCall[];
   patientCallbacks?: LeadPatientCallback[];
@@ -1790,10 +2001,6 @@ export const pushApi = {
     api<{ ok: boolean; reason?: string }>('/push/register', { method: 'DELETE', body: JSON.stringify({ deviceId }) }),
 };
 
-/** The desk level the user is "working as" on the Leads page (1|2|3). Every lead write carries it
- *  as `asLevel`, so the log is stamped and the lead moves to that level. */
-let leadWorkLevel: number | null = null;
-export function setLeadWorkLevel(l: number | null) { leadWorkLevel = l; }
 export const leadsApi = {
   list: (qs = '') => api<LeadRow[]>(`/leads${qs}`),
   funnel: () => api<LeadFunnel>('/leads/funnel'),
@@ -1801,12 +2008,27 @@ export const leadsApi = {
   callOutcomes: () => api<{ value: string; count: number }[]>('/leads/call-outcomes'),
   get: (id: string) => api<LeadDetail>(`/leads/${id}`),
   create: (data: unknown) => api<LeadCreateResult>('/leads', { method: 'POST', body: JSON.stringify(data) }),
-  update: (id: string, data: unknown) => api(`/leads/${id}`, { method: 'PATCH', body: JSON.stringify({ asLevel: leadWorkLevel ?? undefined, ...(data as object) }) }),
-  addActivity: (id: string, data: unknown) => api(`/leads/${id}/activities`, { method: 'POST', body: JSON.stringify({ asLevel: leadWorkLevel ?? undefined, ...(data as object) }) }),
+  update: (id: string, data: unknown) => api(`/leads/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  addActivity: (id: string, data: unknown) => api(`/leads/${id}/activities`, { method: 'POST', body: JSON.stringify(data) }),
   convert: (id: string, data: unknown = {}) => api<{ patientId: string; already: boolean; linkedExisting?: boolean }>(`/leads/${id}/convert`, { method: 'POST', body: JSON.stringify(data) }),
+  /** "Someone else visited": link the lead to a RELATIVE's existing patient record and mark it converted. */
+  /**
+   * Household suggestions (19 Sep 2026): patients who share a RARE name with this enquiry and
+   * registered around it — the case the phone number cannot prove. Confirming one is just
+   * convertFamily below; there is no separate confirm call.
+   */
+  matchSuggestions: (id: string) => api<LeadMatchSuggestion[]>(`/leads/${id}/match-suggestions`),
+  dismissMatchSuggestion: (id: string, sid: string, reason?: string) =>
+    api<{ ok: true }>(`/leads/${id}/match-suggestions/${sid}/dismiss`, { method: 'POST', body: JSON.stringify({ reason }) }),
+  convertFamily: (id: string, data: { patientId: string; relation: string; note?: string }) =>
+    api<{ patientId: string; relation: string; already: boolean; autoRouted?: boolean }>(`/leads/${id}/convert-family`, { method: 'POST', body: JSON.stringify(data) }),
   call: (id: string) => api<{ callRef: string; status: string; provider: string; error?: string; callId?: string; leg?: 'toolbar' | 'phone'; fellBack?: string; duplicateOf?: string; suppressed?: true; inFlight?: true; invalidNumber?: true }>(`/leads/${id}/call`, { method: 'POST' }),
   outcome: (id: string, data: { disposition: string; connected?: boolean; note?: string; status?: string; nextActionAt?: string | null }) =>
-    api<{ nextActionAt?: string | null }>(`/leads/${id}/outcome`, { method: 'POST', body: JSON.stringify({ asLevel: leadWorkLevel ?? undefined, ...data }) }),
+    api<{ nextActionAt?: string | null }>(`/leads/${id}/outcome`, { method: 'POST', body: JSON.stringify(data) }),
+  /** Level 2 → Level 3 with a reason (12 Sep 2026); the lead leaves Level 2's list. */
+  escalate: (id: string, reason: string) => api(`/leads/${id}/escalate`, { method: 'POST', body: JSON.stringify({ reason }) }),
+  /** Level 3 → Level 2. */
+  returnToL2: (id: string, note?: string) => api(`/leads/${id}/return-l2`, { method: 'POST', body: JSON.stringify({ note }) }),
   due: (withinHours?: number) => api<DueFollowup[]>(`/leads/due${withinHours ? `?withinHours=${withinHours}` : ''}`),
   assign: (id: string, data: { ownerId?: string }) => api(`/leads/${id}/assign`, { method: 'POST', body: JSON.stringify(data) }),
   statsSeries: (days = 14) => api<{ days: { date: string; created: number; converted: number }[] }>(`/leads/stats-series?days=${days}`),
@@ -1820,18 +2042,50 @@ export const leadsApi = {
   /** Level 3's scorecard over both levels — per person and rolled up. */
   productivity: (from?: string, to?: string) =>
     api<LeadProductivity>(`/leads/productivity${from || to ? `?from=${from ?? ''}&to=${to ?? ''}` : ''}`),
-  // The reviewer's verdict on a lead marked junk by someone else (see the 'junk_review' segment).
-  junkReview: (id: string, verdict: 'confirmed' | 'reopened', note?: string) =>
-    api<LeadDetail>(`/leads/${id}/junk-review`, { method: 'POST', body: JSON.stringify({ verdict, note }) }),
+  /** The leads behind one number on the productivity tab — same rules as the count, so they always agree. */
+  productivityList: (q: { from?: string; to?: string; level?: number; person?: string; cut: string; offset?: number }) => {
+    const p = new URLSearchParams();
+    if (q.from) p.set('from', q.from);
+    if (q.to) p.set('to', q.to);
+    if (q.level) p.set('level', String(q.level));
+    p.set('person', q.person ?? 'all');
+    p.set('cut', q.cut);
+    if (q.offset) p.set('offset', String(q.offset));
+    return api<ProductivityLeadList>(`/leads/productivity/list?${p.toString()}`);
+  },
+  /** Every note a person wrote on one lead, newest first. */
+  productivityNotes: (leadId: string) => api<ProductivityLeadNotes>(`/leads/productivity/notes/${leadId}`),
   /** The telecaller's hand-over: send a qualified lead to its clinic. */
   routeClinic: (id: string, data: { clinicId: string; note?: string }) =>
     api<LeadRow & { owner?: string | null; via?: string }>(`/leads/${id}/route-clinic`, { method: 'POST', body: JSON.stringify(data) }),
+  /**
+   * Move an ALREADY-ROUTED lead to another clinic. The reason is required — it is written to the
+   * lead's timeline and the audit trail.
+   *
+   * The response carries the destination and new owner by name because the caller usually CANNOT
+   * re-read the lead afterwards: it has left their clinic, so a follow-up GET returns 404. Build
+   * the confirmation from what comes back here, and do not refetch.
+   */
+  transferClinic: (id: string, data: { clinicId: string; reason: string }) =>
+    api<LeadRow & { owner: string | null; ownerName: string | null; clinicName: string; from: { id: string; name: string } | null }>(
+      `/leads/${id}/transfer-clinic`, { method: 'POST', body: JSON.stringify(data) }),
   /**
    * The caller is already a patient and wants this clinic to ring them back. Not a qualification:
    * the lead does not move through the desk, the clinic is simply told, on a 30-minute clock.
    */
   patientCallback: (id: string, data: { clinicId: string; patientId?: string; note?: string }) =>
     api<{ id: string; clinic: string; patientName: string; dueAt: string | null }>(`/leads/${id}/patient-callback`, { method: 'POST', body: JSON.stringify(data) }),
+  /**
+   * QUERIES (owner, 18 Sep 2026). An enquiry from a number that already belongs to a patient is a
+   * query, not a lead: it is answered by the patient's own clinic and counted nowhere as
+   * acquisition. markQuery is the manual path; the system flags most of them on arrival.
+   */
+  markQuery: (id: string, data: { patientId?: string; note?: string } = {}) =>
+    api<LeadRow>(`/leads/${id}/query`, { method: 'POST', body: JSON.stringify(data) }),
+  resolveQuery: (id: string, note?: string) =>
+    api<LeadRow>(`/leads/${id}/query-resolve`, { method: 'POST', body: JSON.stringify({ note }) }),
+  undoQuery: (id: string, reason: string) =>
+    api<LeadRow>(`/leads/${id}/query-undo`, { method: 'POST', body: JSON.stringify({ reason }) }),
   resolvePatientCallback: (cbId: string, note?: string) =>
     api<PatientCallbackRow>(`/leads/patient-callbacks/${cbId}/resolve`, { method: 'POST', body: JSON.stringify({ note }) }),
   patientCallbacks: (includeResolved?: boolean) =>
@@ -1855,12 +2109,14 @@ export const leadsApi = {
 };
 
 // ---- Lead journey: the accountability report (BI CRM tab + the Leads-page strip) ----
-export interface JourneyStrip { inTriage: number; unassigned: number; neverCalled: number; routedToday: number; firstCallHours: number }
+export interface JourneyStrip { inTriage: number; unassigned: number; neverCalled: number; routedToday: number; openQueries?: number; firstCallHours: number }
 export interface JourneyDay {
   date: string; arrived: number; calledWithin: number; calledLater: number;
   notDialled: number; worked: number; newLeads: number; neverCalled: number; closedUnworked: number;
   routed: number; converted: number; junked: number;
   channels: Record<string, number>; deliveriesLost: number;
+  /** Enquiries from numbers already registered as patients — in none of the columns above. */
+  queries?: number;
 }
 export interface LeadJourney {
   from: string; to: string; firstCallHours: number; teamView: boolean;
@@ -1868,6 +2124,8 @@ export interface LeadJourney {
   totals: { arrived: number; calledWithin: number; calledLater: number; notDialled: number;
     worked: number; newLeads: number; neverCalled: number; closedUnworked: number; routed: number; converted: number; junked: number };
   days: JourneyDay[];
+  /** What the whole report subtracts, published so the reader can see it. */
+  queries?: { total: number; open: number };
   triage: { withTelecaller: number; unassigned: number; aging: { under24h: number; d1to3: number; over3d: number } };
   routing: { byClinic: { clinic: string; routed: number; within4h: number; within24h: number; within3d: number; over3d: number }[] };
   telecallers: { id: string; name: string; inTriageNow: number; firstCalls: number; routed: number }[];
@@ -2092,7 +2350,6 @@ export interface Pod {
 export interface PodPerf { pod: { id: string; name: string; assignRule: string }; members: { id: string; name: string; open: number; converted: number; junk: number; total: number; conversionRate: number }[] }
 export type InboundStrategy = 'round_robin' | 'least_loaded' | 'fixed';
 export interface InboundDesk { podId: string | null; memberIds: string[]; eligible: PodAgent[]; strategy: InboundStrategy; fixedUserId: string | null }
-export interface JunkReviewDesk { enabled: boolean; userIds: string[]; eligible: PodAgent[] }
 export const podsApi = {
   list: () => api<Pod[]>('/pods'),
   agents: () => api<PodAgent[]>('/pods/agents'),
@@ -2118,9 +2375,6 @@ export const podsApi = {
   setInboundDesk: (userIds: string[], strategy: InboundStrategy = 'round_robin', fixedUserId?: string | null) =>
     api<InboundDesk>('/pods/inbound-desk', { method: 'PUT', body: JSON.stringify({ userIds, strategy, fixedUserId }) }),
   // Junk re-verification desk: the reviewer pool a junked lead round-robins to (excluding whoever marked it).
-  junkReviewDesk: () => api<JunkReviewDesk>('/pods/junk-review'),
-  setJunkReviewDesk: (userIds: string[], enabled = true) =>
-    api<JunkReviewDesk>('/pods/junk-review', { method: 'PUT', body: JSON.stringify({ userIds, enabled }) }),
 };
 
 // ---- packages (M20) ----
@@ -2162,11 +2416,76 @@ export type PkgUnits =
 export interface PkgSale {
   id: string; soldAt: string; state: string; package?: { name: string; kind: string; custom?: boolean }; units?: PkgUnits;
   expiresAt?: string | null;
+  /** Rupee value the protocol was sold for — present on custom value protocols. */
+  walletCredit?: string | number | null;
   /** Timeline passed while still active — consumption is blocked until a rollover is approved. */
   lapsed?: boolean;
   /** A rollover request is already waiting in the approvals queue. */
   pendingRollover?: boolean;
+  /** Nothing drawn, consumed, covered, renewed or billed — its deletion may be ASKED for. Anything
+   *  false here must be discontinued instead, which keeps the row and its reason. */
+  deletable?: boolean;
+  deleteBlockedBecause?: string | null;
+  /** Who created it — only they may ask for it to be deleted (21 Sep 2026). Null on protocols from
+   *  before that date; for those an admin asks. */
+  createdBy?: string | null;
+  createdByName?: string | null;
+  /** A deletion request is waiting. The protocol is frozen until it is decided or withdrawn. */
+  pendingDelete?: { requestedBy: string | null; approverNames: string[] } | null;
 }
+
+// ---- Quotation: the price list and the estimates built from it (18 Sep 2026) ----
+// Open to every signed-in role, unlike the catalogue endpoints these mirror — the people who quote
+// a price (telecallers, the lead desk, the front desk) hold none of services/packages/inventory view.
+
+export interface QuoteCataloguePack { id: string; label: string; price: number; gstRate: number; hsnSac: string | null }
+export interface QuoteCatalogueItem {
+  kind: 'service' | 'package' | 'medicine';
+  id: string; name: string; subtitle: string | null;
+  price: number; gstRate: number; hsnSac: string | null;
+  packs?: QuoteCataloguePack[];
+  /** Protocols: what the patient gets. */
+  contents?: string[];
+  includedValue?: number | null;
+}
+export interface QuotePatientHit { id: string; fullName: string; phone: string | null; mrn: string | null; clinic: string | null; deceased: boolean }
+export interface QuotationLineRow {
+  id: string; kind: string; refId: string; packId: string | null; description: string; hsnSac: string | null;
+  qty: number; unitPrice: number; gstRate: number; lineNet: number; taxAmount: number; lineTotal: number;
+}
+export interface QuotationDetail {
+  id: string; number: string; createdAt: string; status: string;
+  patientId: string | null; patientName: string; patientPhone: string | null; note: string | null; items: number;
+  subTotal: number; taxTotal: number; roundOff: number; total: number;
+  createdBy: { id: string; name: string } | null;
+  voidedAt?: string | null; voidReason?: string | null; voidedByName?: string | null;
+  clinic: (ClinicHeader & { id: string }) | null;
+  lines: QuotationLineRow[];
+}
+export interface QuotationListRow {
+  id: string; number: string; createdAt: string; status: string;
+  patientId: string | null; patientName: string; patientPhone: string | null;
+  items: number; amount: number; createdByName: string | null;
+  clinic: { id: string; code: string; name: string } | null;
+  voidedAt?: string | null; voidReason?: string | null;
+}
+/** What the client may send: what and how many. Prices come from the server. */
+export interface QuotationDraftLine { kind: string; refId: string; packId?: string; qty: number }
+
+export const quotationsApi = {
+  catalogue: () => api<{ generatedAt: string; items: QuoteCatalogueItem[] }>('/quotations/catalogue'),
+  patients: (q: string) => api<QuotePatientHit[]>(`/quotations/patients?q=${encodeURIComponent(q)}`),
+  create: (data: { patientId?: string; patientName?: string; patientPhone?: string; note?: string; lines: QuotationDraftLine[] }) =>
+    api<QuotationDetail>('/quotations', { method: 'POST', body: JSON.stringify(data) }),
+  // Only truthy params: an empty clinicId= is a 400 here, not "all clinics".
+  list: (f: { q?: string; clinicId?: string; from?: string; to?: string; limit?: number; offset?: number } = {}) => {
+    const p = new URLSearchParams();
+    Object.entries(f).forEach(([k, v]) => { if (v !== undefined && v !== null && v !== '') p.set(k, String(v)); });
+    return api<{ total: number; rows: QuotationListRow[] }>(`/quotations${p.toString() ? `?${p}` : ''}`);
+  },
+  get: (id: string) => api<QuotationDetail>(`/quotations/${id}`),
+  void: (id: string, reason?: string) => api<QuotationDetail>(`/quotations/${id}/void`, { method: 'POST', body: JSON.stringify({ reason }) }),
+};
 
 export const packagesApi = {
   list: (kind?: string, diseaseId?: string, includeInactive?: boolean) => {
@@ -2191,6 +2510,14 @@ export const packagesApi = {
   draw: (saleId: string, data: unknown) => api<{ covered: number; overage: number; coveredByPlan: boolean; inFormulary: boolean }>(`/package-sales/${saleId}/draw`, { method: 'POST', body: JSON.stringify(data) }),
   renew: (saleId: string, data: unknown = {}) => api<{ newSaleId: string; rolledOver: Record<string, number>; billNumber: string | null }>(`/package-sales/${saleId}/renew`, { method: 'POST', body: JSON.stringify(data) }),
   discontinue: (saleId: string, data: { reason: string; refund?: number; notes?: string }) => api(`/package-sales/${saleId}/discontinue`, { method: 'POST', body: JSON.stringify(data) }),
+  /** Ask for a fresh protocol to be deleted (21 Sep 2026). Only its creator may ask; a named
+   *  approver decides it in Follow-ups → Approvals. There is no direct delete any more. */
+  requestDelete: (saleId: string, reason: string) =>
+    api<{ approverNames: string[] }>(`/package-sales/${saleId}/delete-request`, { method: 'POST', body: JSON.stringify({ reason }) }),
+  withdrawDelete: (saleId: string) => api<{ withdrawn: true }>(`/package-sales/${saleId}/delete-request/withdraw`, { method: 'POST' }),
+  deleteApprovers: () => api<{ approverUserIds: string[]; approverNames: string[] }>('/rules/protocol-delete'),
+  setDeleteApprovers: (approverUserIds: string[]) =>
+    api<{ approverUserIds: string[]; approverNames: string[] }>('/rules/protocol-delete', { method: 'PUT', body: JSON.stringify({ approverUserIds }) }),
   /** Ask to extend a lapsing/lapsed protocol (no new bill). Lands in the approvals queue for the
    *  configured roles (default: senior doctor / medical director). */
   requestRollover: (saleId: string, data: { extendMonths: number; reason: string }) =>
@@ -2438,10 +2765,79 @@ export interface Approval {
   note?: string | null; state: string; payload?: any; createdAt?: string;
   requestedByName?: string | null;
   bill?: ApprovalBill | null;
+  /** Which clinic raised it — the list spans every clinic the approver holds (12 Sep 2026). */
+  clinicId?: string; clinic?: { id: string; code: string; name: string } | null;
 }
 
 /** `hardMax` is the rule itself (25) — a clinic may set maxPct lower, never higher. */
-export interface DiscountCeiling { clinicId: string; enforce: boolean; maxPct: number; hardMax: number }
+export interface DiscountCeiling { clinicId: string; enforce: boolean; maxPct: number; hardMax: number; /** Chain-wide named approvers for discounts above the ceiling (12 Sep 2026). */ approverUserIds?: string[]; approverNames?: string[] }
+
+/** The five outcomes the desk can record on an overdue patient. Mirrors OverdueReturnService.STAGES. */
+/** `reopened` is set only by a reviewer sending a patient back — the desk never picks it. */
+export type OverdueStage = 'discontinued' | 'started_elsewhere' | 'renewed' | 'critical' | 'deceased' | 'reopened';
+/**
+ * How each stage reads on screen.
+ *
+ * Since 19 Sep 2026 `critical` is no longer the only one that keeps the patient on the list:
+ * `renewed` keeps them too, until the system actually sees them come in.
+ */
+export const OVERDUE_STAGE_LABEL: Record<OverdueStage, string> = {
+  discontinued: 'Discontinued',
+  started_elsewhere: 'Started treatment elsewhere',
+  renewed: 'Renewed',
+  critical: 'Critical',
+  deceased: 'Deceased',
+  reopened: 'Sent back by a reviewer',
+};
+/** What the desk may choose. `reopened` is excluded: only a reviewer sets it. */
+export const OVERDUE_STAGE_CHOICES: OverdueStage[] = ['discontinued', 'started_elsewhere', 'renewed', 'critical', 'deceased'];
+export interface OverduePatient {
+  patientId: string; name: string; phone: string | null; kind: string;
+  dueAt: string; daysLate: number; attempts: number;
+  doctor: string | null; disease: string | null; lastVisit: string | null;
+  stage: OverdueStage | null; stageAt: string | null; lastNote: string | null;
+}
+/** A row of the Overdue section's Deceased tab. */
+export interface OverdueDeceasedRow {
+  patientId: string; name: string; phone: string | null; clinic: string | null;
+  deceasedAt: string; note: string | null; markedBy: string | null; lastVisit: string | null;
+}
+/**
+ * A patient the desk could not bring back, waiting on a clinical decision (owner, 19 Sep 2026).
+ * Raised by the three outcomes the desk cannot settle; worked by the senior doctor and the
+ * medical director.
+ */
+export interface PatientReviewRow {
+  id: string; patientId: string; name: string; phone: string | null; mrn: string | null;
+  deceased: boolean; clinic: string | null;
+  /** discontinued | started_elsewhere | critical */
+  reason: string;
+  state: string; raisedAt: string; raisedBy: string | null; daysWaiting: number;
+  assignedTo: string | null; assignedToId: string | null; assignedAt: string | null;
+  outcome: string | null; note: string | null; closedAt: string | null; closedBy: string | null;
+  /** The last thing the desk actually typed about this person — the reviewer needs their words. */
+  deskNote: string | null;
+}
+export const PATIENT_REVIEW_REASON: Record<string, string> = {
+  discontinued: 'Discontinued treatment',
+  started_elsewhere: 'Started treatment elsewhere',
+  critical: 'Critical',
+};
+export const patientReviewApi = {
+  list: (state: 'open' | 'closed' = 'open') => api<PatientReviewRow[]>(`/analytics/patient-review?state=${state}`),
+  count: () => api<{ open: number }>('/analytics/patient-review/count'),
+  close: (id: string, note: string) =>
+    api<unknown>(`/analytics/patient-review/${id}/close`, { method: 'POST', body: JSON.stringify({ note }) }),
+  sendBack: (id: string, reason: string) =>
+    api<unknown>(`/analytics/patient-review/${id}/send-back`, { method: 'POST', body: JSON.stringify({ reason }) }),
+  assign: (id: string, doctorId: string, note?: string) =>
+    api<unknown>(`/analytics/patient-review/${id}/assign`, { method: 'POST', body: JSON.stringify({ doctorId, note }) }),
+};
+
+export interface OverdueActivity {
+  id: string; type: string; body: string; stage: OverdueStage | null; createdAt: string;
+  user?: { fullName: string } | null;
+}
 
 export const followupApi = {
   dueTasks: () => api<DueTask[]>('/followup-tasks'),
@@ -2597,11 +2993,26 @@ export interface CollectionClinic {
   collected: number; refunded: number; net: number;
   payments: number; bills: number; billed: number; perDay: number;
   byMethod: { method: string; amount: number }[];
+  /** One cell per payment type — the Cash column that adds up to Net (23 Sep 2026). */
+  byMethodNet: Record<string, { collected: number; refunded: number; net: number; payments: number }>;
+  /** Spent from credit paid in earlier — not money taken in this window. */
+  accountSettled: number;
+  /** Advances taken in this window: money in the drawer, held as patient credit. */
+  advances: number;
 }
 export interface CollectionReport {
   from: string; to: string; days: number;
+  /** The payment type this report was narrowed to, or null for everything. */
+  method: string | null;
+  /** The payment types present in this window, in column order, with their labels. */
+  methods: { key: string; label: string }[];
   clinics: CollectionClinic[];
-  total: { collected: number; refunded: number; net: number; billed: number; perDay: number; payments: number; bills: number; clinicsReporting: number };
+  total: {
+    collected: number; refunded: number; net: number; billed: number; perDay: number;
+    payments: number; bills: number; clinicsReporting: number;
+    byMethodNet: Record<string, { collected: number; refunded: number; net: number; payments: number }>;
+    accountSettled: number; advances: number;
+  };
 }
 
 // ---- BI Patient Tracker (the hand-kept Excel, computed live) ----
@@ -2683,8 +3094,13 @@ export interface ClinicLeadsReport {
     medianHoursToConvert: number;
     /** Marked converted by the desk but no patient was ever registered. */
     markedNotRegistered: number;
+    /** Enquiries from numbers already registered as patients — excluded from every count here. */
+    queries?: number; queriesOpen?: number;
     /** Registered, but stamped within 2s of routing — excluded from the median. */
-    convertedOnArrival: number;
+    /** Nobody ever routed these to a clinic — the registration assigned it. NOT "converted fast". */
+    convertedUnrouted: number;
+    /** Hours from the hand-over to the registration, for the leads a clinic actually held. */
+    medianHoursHeld?: number;
   };
   /** Converted on paper, never started treatment. `linked` is the checkable denominator. */
   noMedicine: { count: number; linked: number; unlinked: number; rate: number };
@@ -2696,7 +3112,7 @@ export interface ClinicLeadsReport {
   /** The queue as it stands — not date-filtered, on purpose. */
   openNow: { open: number; overdue: number; noNextAction: number; escalated: number; oldestDays: number };
   quality: {
-    onArrival: number; convertedBeforeAssigned: number;
+    unrouted: number; convertedBeforeAssigned: number;
     withDisease: number; withCampaign: number; of: number;
   };
 }
@@ -2709,7 +3125,7 @@ export interface ClinicLeadRowDetail {
   owner: string | null; routedBy: string | null; won: boolean;
   assignedAt: string | null; nextActionAt: string | null; convertedAt: string | null;
   visitedAt: string | null; escalated: boolean; createdAt: string | null;
-  lastNote: string | null; lastNoteAt: string | null;
+  lastNote: string | null; lastNoteAt: string | null; lastNoteBy: string | null;
 }
 export interface ClinicLeadsList {
   cut: string; total: number; limit: number; offset: number;
@@ -2718,7 +3134,22 @@ export interface ClinicLeadsList {
   rows: ClinicLeadRowDetail[];
 }
 
+/** The BI New patients report (16 Sep 2026) — on-screen totals and preview rows; the full file is a CSV download. */
+export interface NewPatientsTotals { patients: number; fromLead: number; withDoctor: number; billed: number; billedAmount: number; paidAmount: number }
+export interface NewPatientsGroup { key: string; label: string; patients: number; billedPatients: number; bills: number; billed: number; paid: number; outstanding: number; billedPct: number; avgBilled: number }
+export interface NewPatientsBreakdown {
+  bySource: NewPatientsGroup[]; byClinic: NewPatientsGroup[]; byCampaign: NewPatientsGroup[];
+  matrix: { source: string; clinic: string; patients: number; billedPatients: number; billed: number }[];
+  clinics: string[]; sources: string[];
+}
+export interface NewPatientPreviewRow {
+  patientId: string; registeredOn: string; mrn: string; name: string; clinic: string; clinicCode: string;
+  doctor: string; fromLead: string; source: string; campaign: string; utm?: Record<string, string>;
+  bills: number; billed: number; paid: number;
+}
 export const analyticsApi = {
+  newPatients: (from: string, to: string, clinicId: string) =>
+    api<{ totals: NewPatientsTotals; breakdown?: NewPatientsBreakdown; preview: NewPatientPreviewRow[] }>(`/analytics/new-patients?from=${from}&to=${to}&clinicId=${encodeURIComponent(clinicId)}`),
   /**
    * The department packs' NEW metrics. Everything else on those screens is fetched from the
    * endpoint that already computes it, so a pack can never become a second opinion.
@@ -2744,13 +3175,31 @@ export const analyticsApi = {
   overdueReturn: (f: { clinicId?: string; kind?: string } = {}) =>
     api<OverdueReturn>(`/analytics/overdue-return${q(f as any)}`),
   /**
+   * THE SAME PATIENTS AS A WORKLIST, for the clinic in the picker.
+   *
+   * No clinicId argument on purpose — this rides X-Clinic-Id like every operational call, so it
+   * always follows the picker and can never be left pointing at a clinic a stale report scope
+   * chose. The report above is the chain-wide read; this is the branch's call list.
+   */
+  overdueWorklist: (f: { kind?: string } = {}) =>
+    api<OverduePatient[]>(`/analytics/overdue-return/worklist${q(f as any)}`),
+  overdueCount: () => api<{ count: number }>('/analytics/overdue-return/count'),
+  /** The Deceased tab — patients marked deceased who are registered or followed up at this clinic. */
+  overdueDeceased: () => api<OverdueDeceasedRow[]>('/analytics/overdue-return/deceased'),
+  overdueHistory: (patientId: string) =>
+    api<OverdueActivity[]>(`/analytics/overdue-return/${patientId}/activity`),
+  /** Record a note, a call, a WhatsApp, or a change of stage. Append-only server-side. */
+  overdueLog: (patientId: string, body: { type?: string; body?: string; stage?: OverdueStage | '' }) =>
+    api<OverdueActivity>(`/analytics/overdue-return/${patientId}/activity`, { method: 'POST', body: JSON.stringify(body) }),
+  /**
    * Every clinic, always — unlike every other analytics call this one ignores the clinic picker,
    * because the whole point is the chain-wide view. See the endpoint comment for why.
    */
-  collection: (from?: string, to?: string) => {
+  collection: (from?: string, to?: string, method?: string) => {
     const p = new URLSearchParams();
     if (from) p.set('from', from);
     if (to) p.set('to', to);
+    if (method) p.set('method', method);
     return api<CollectionReport>(`/analytics/collection${p.toString() ? `?${p}` : ''}`);
   },
   overview: (f: AnalyticsFilter = {}) => api<any>(`/analytics/overview${q(f)}`),
@@ -2915,7 +3364,7 @@ export interface OverdueFollowupTask {
   taskId: string; patientId: string; patient: string; kind: string;
   dueAt: string; cycle: number; attempts: number; assignee: string | null; daysOverdue: number;
 }
-export interface JunkStat { agentUserId: string; name: string; marked: number; confirmed: number; reopened: number; pending: number; reopenRate: number }
+export interface JunkStat { agentUserId: string; name: string; marked: number }
 export interface CallsReport {
   range: { from: string; to: string; clamped: boolean };
   /** 'own' = the server narrowed everything to the signed-in user. Comes from the server so the
@@ -3169,4 +3618,53 @@ export const portalStaffApi = {
   ackAlert: (id: string) => api(`/patient-portal/alerts/${id}/ack`, { method: 'POST' }),
   refillRequests: () => api<any[]>('/patient-portal/refills'),
   resolveRefill: (id: string) => api(`/patient-portal/refills/${id}/done`, { method: 'POST' }),
+};
+
+// ── WhatsApp tab: this clinic's patients' WhatsApp chats, mirrored from ChatFlow ──────────────
+export interface WaPatient { id: string; name: string; mrn: string | null; deceased: boolean }
+export interface WaThreadRow {
+  id: string; phone: string; contactName: string | null; patients: WaPatient[];
+  lastMessageAt: string; lastPreview: string | null; lastDirection: 'inbound' | 'outbound' | null;
+  unread: number; windowOpen: boolean; optedOut: boolean;
+}
+export interface WaThreadDetail {
+  id: string; phone: string; contactName: string | null; patients: WaPatient[];
+  window: { open: boolean; expiresAt: string | null; lastInboundAt: string | null }; optedOut: boolean;
+}
+export interface WaMessage {
+  id: string; direction: 'inbound' | 'outbound'; type: string; body: string | null; caption: string | null;
+  filename: string | null; mimeType: string | null; hasMedia: boolean; template: string | null;
+  status: string; error: string | null; source: string;
+  sentBy: { name: string; role: string | null; userId: string | null } | null; at: string;
+}
+export interface WaTemplate { name: string; language: string; category: string; body: string; param_count: number }
+
+export const whatsappApi = {
+  unread: () => api<{ unread: number; enabled: boolean }>('/whatsapp/unread'),
+  threads: (q?: string, unread?: boolean) => {
+    const p = new URLSearchParams();
+    if (q) p.set('q', q);
+    if (unread) p.set('unread', 'true');
+    const qs = p.toString();
+    return api<WaThreadRow[]>(`/whatsapp/threads${qs ? `?${qs}` : ''}`);
+  },
+  thread: (id: string) => api<WaThreadDetail>(`/whatsapp/threads/${id}`),
+  forPatient: (patientId: string) => api<{ threadId: string | null }>(`/whatsapp/patients/${patientId}/thread`),
+  messages: (id: string, before?: string) =>
+    api<{ messages: WaMessage[]; hasMore: boolean; nextBefore: string | null }>(`/whatsapp/threads/${id}/messages${before ? `?before=${encodeURIComponent(before)}` : ''}`),
+  read: (id: string) => api(`/whatsapp/threads/${id}/read`, { method: 'POST' }),
+  reply: (id: string, text: string, clientId: string, file?: File) => {
+    if (!file) return api(`/whatsapp/threads/${id}/reply`, { method: 'POST', body: JSON.stringify({ text, clientId }) });
+    const form = new FormData();
+    if (text) form.set('text', text);
+    form.set('clientId', clientId);
+    form.set('file', file);
+    return apiUpload(`/whatsapp/threads/${id}/reply`, form);
+  },
+  templates: () => api<WaTemplate[]>('/whatsapp/templates'),
+  sendTemplate: (id: string, name: string, language: string, params: string[], clientId: string) =>
+    api<{ ok: boolean; status: string; scheduledFor: string | null }>(`/whatsapp/threads/${id}/template`, {
+      method: 'POST', body: JSON.stringify({ name, language, params, clientId }),
+    }),
+  media: (messageId: string) => apiBlob(`/whatsapp/messages/${messageId}/media`),
 };
