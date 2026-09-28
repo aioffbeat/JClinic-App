@@ -244,6 +244,38 @@ function drawLotusAt(px, w, h, cx, cy, size, onDark) {
   }
 }
 
+/**
+ * The website needs the same mark, and had none: apps/web/public/logo.png is the 176x68 wordmark,
+ * served as the favicon at 2.6:1 so browsers squash it into an illegible square. These are drawn
+ * here rather than copied so the web and the app cannot drift, and so each size is sharp instead
+ * of an upscale.
+ *
+ *   node scripts/make-icons.mjs --web "../Clinic Management Dr JOshi/jclinic/apps/web/public"
+ */
+const webArg = process.argv.find((a) => a.startsWith('--web'));
+if (webArg) {
+  const dir = webArg.includes('=') ? webArg.split('=').slice(1).join('=') : process.argv[process.argv.indexOf(webArg) + 1];
+  if (!dir) {
+    console.error('--web needs a target directory');
+    process.exit(1);
+  }
+  const target = join(dirname(fileURLToPath(import.meta.url)), '..', dir);
+  mkdirSync(target, { recursive: true });
+  const web = [
+    // 192 and 512 are what a web app manifest asks for; 180 is the size iOS uses for a home-screen
+    // shortcut; 32 is the favicon browsers actually render in a tab.
+    ['icon-192.png', makeIcon(192, { background: 'gradient', onDark: true, scale: 1.6, padded: false })],
+    ['icon-512.png', makeIcon(512, { background: 'gradient', onDark: true, scale: 1.6, padded: false })],
+    ['apple-touch-icon.png', makeIcon(180, { background: 'gradient', onDark: true, scale: 1.6, padded: false })],
+    ['favicon-32.png', makeIcon(32, { background: 'gradient', onDark: true, scale: 1.7, padded: false })],
+  ];
+  for (const [name, buf] of web) {
+    writeFileSync(join(target, name), buf);
+    console.log(`  web/${name.padEnd(22)} ${(buf.length / 1024).toFixed(1)} KB`);
+  }
+  process.exit(0);
+}
+
 const files = [
   ['icon.png', makeIcon(1024, { background: 'gradient', onDark: true, scale: 1.6, padded: false })],
   // Play Console store listing wants exactly 512x512 and a 1024x500 feature graphic.
