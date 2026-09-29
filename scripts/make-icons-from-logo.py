@@ -62,6 +62,20 @@ def feature(master: Image.Image, w: int, h: int) -> Image.Image:
     return canvas
 
 
+def in_app_lockup(master: Image.Image, width: int) -> Image.Image:
+    """The wide wordmark on navy, for the sign-in and registration screens.
+
+    Drawn at 3x the size it is displayed at, because React Native picks the nearest density and
+    a phone is 2x or 3x — a 1x asset is visibly soft, which is the whole reason the lotus was
+    drawn in code before this file existed.
+    """
+    band = master.crop((342 - 110, 848 - 95, 1576 + 110, 1072 + 95))
+    h = round(width * band.size[1] / band.size[0])
+    canvas = Image.new('RGBA', (width, h), NAVY)
+    canvas.alpha_composite(band.resize((width, h), Image.LANCZOS))
+    return canvas
+
+
 def main() -> None:
     master = Image.open(MASTER).convert('RGBA')
     ring = enso(master)
@@ -74,6 +88,8 @@ def main() -> None:
         ('splash.png', centred(1024, master, 0.55, MIST)),
         ('favicon.png', centred(48, ring, 0.62, NAVY)),
         ('play-feature-1024x500.png', feature(master, 1024, 500)),
+        # Displayed at ~240pt wide inside the app; 3x for a phone screen.
+        ('brand/logo-lockup.png', in_app_lockup(master, 720)),
     ]
     for name, img in files:
         path = OUT / name

@@ -42,6 +42,18 @@ export default function Home() {
   const visits = history.data?.length ?? 0;
   const pendingFeedback = feedback.data?.length ?? 0;
   const firstName = patient?.name?.split(' ')[0] ?? '';
+  /**
+   * The device clock, not the server's: the patient is standing in their own morning, and the one
+   * thing worse than no greeting is being wished good morning at bedtime.
+   */
+  const greeting = (() => {
+    const h = new Date().getHours();
+    if (h < 5) return 'Good night';
+    if (h < 12) return 'Good morning';
+    if (h < 17) return 'Good afternoon';
+    if (h < 21) return 'Good evening';
+    return 'Good night';
+  })();
 
   return (
     <Screen
@@ -57,7 +69,7 @@ export default function Home() {
       <Wordmark size="sm" />
 
       <Hero
-        title={firstName ? `Hello, ${firstName}` : 'Hello'}
+        title={firstName ? `${greeting}, ${firstName}` : greeting}
         subtitle={
           me?.diseases.length
             ? me.diseases.map((d) => d.disease).join(' · ')

@@ -6,7 +6,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { ApiError, portalApi, type PublicClinic } from '@/src/api';
 import { describeDevice } from '@/src/lib';
 import { usePatientSession } from '@/src/session-context';
-import { Body, Button, Caption, Card, H1, H2, Label, Loading, Notice, Screen, color, space } from '@/src/ui';
+import { Body, BrandLockup, Button, Caption, Card, H1, H2, Label, Loading, Notice, Screen, color, space } from '@/src/ui';
 
 /**
  * Public self-registration.
@@ -175,6 +175,7 @@ export default function Register() {
       <Stack.Screen options={{ headerShown: true, title: 'Register', headerTintColor: color.petrolInk }} />
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
         <Screen>
+          <BrandLockup style={{ marginBottom: space.md }} width={200} />
           <H1>Register</H1>
 
           {step === 'clinic' && (

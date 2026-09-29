@@ -118,7 +118,10 @@ export interface PortalCarePlan {
   diseases: { disease: string; stage: number | null; status: string }[];
   dietPlan: {
     pathya: unknown; apathya: unknown;
-    dinacharya: string[]; dinacharyaPlan: string | null;
+    dinacharya: string[];
+    /** `{ existing, changes }` — a Json column, NOT a string. Declaring it as one is what let an
+     *  object reach <Text> and crash My plan; the web has always read it as an object. */
+    dinacharyaPlan: unknown;
     yogaAsanas: string[]; yogasanaAdvice: string | null; pranayama: string[];
     lifestyleNotes: string | null; dietChart: unknown;
     validFrom: string | null; validTo: string | null; date: string;

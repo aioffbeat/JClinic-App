@@ -7,6 +7,7 @@ import {
   clearQueryCache,
   clearSession,
   hydrateApiStorage,
+  isExpired,
   describeDevice,
   getDeviceId,
   refreshAccessToken,
@@ -51,6 +52,8 @@ type SessionState = {
   /** Every chart reachable from this phone — self plus any caregiver grants. */
   accessible: AccessiblePatient[];
   signedIn: boolean;
+  /** Still deciding whether there is a session. The gate must wait rather than assume there isn't. */
+  booting: boolean;
   /** True when the OS has refused notifications — reminders cannot arrive until that changes. */
   pushBlocked: boolean;
   requestOtp: (phone: string) => Promise<void>;
@@ -85,6 +88,9 @@ export function PatientSessionProvider({ children }: { children: ReactNode }) {
   const [me, setMe] = useState<PortalMe | null>(null);
   const [accessible, setAccessible] = useState<AccessiblePatient[]>([]);
   const [signedIn, setSignedIn] = useState(false);
+  /** True until the stored session has been examined. Without it the entry gate reads `signedIn`
+   *  as false while the refresh is still in flight and redirects to /login mid-restore. */
+  const [booting, setBooting] = useState(true);
   /** Notifications were refused at the OS level. Worth saying out loud: this app exists to remind. */
   const [pushBlocked, setPushBlocked] = useState(false);
   const recovering = useRef(false);
@@ -105,6 +111,7 @@ export function PatientSessionProvider({ children }: { children: ReactNode }) {
     setMe(null);
     setAccessible([]);
     setSignedIn(false);
+    setBooting(false);
     router.replace('/login');
   }, []);
 
@@ -145,9 +152,11 @@ export function PatientSessionProvider({ children }: { children: ReactNode }) {
     if (recovering.current) return;
     recovering.current = true;
     try {
-      const session = await refreshAccessToken();
-      if (session) await adopt(session);
-      else await hardSignOut();
+      const r = await refreshAccessToken();
+      if (r.ok) await adopt(r.session);
+      // Offline, a timeout or a 5xx is not a sign-out. Keep the tokens and let the next attempt
+      // work — the alternative destroyed the credential and made the failure permanent.
+      else if (r.reason === 'dead') await hardSignOut();
     } finally {
       recovering.current = false;
     }
@@ -180,13 +189,23 @@ export function PatientSessionProvider({ children }: { children: ReactNode }) {
       await hydrateApiStorage();
       if (cancelled) return;
 
-      if (!getPortalToken()) {
-        const renewed = await refreshAccessToken();
-        if (cancelled || !renewed) return; // no refresh token, or the session is genuinely over
-        await adopt(renewed);
+      // Presence is not the question — the access token is persisted and nothing deletes it on
+      // exit, so after any real absence it is still here and simply expired. Asking "is it
+      // missing?" meant this branch never ran, which is why the previous fix changed nothing.
+      if (!getPortalToken() || isExpired(getPortalToken())) {
+        const r = await refreshAccessToken();
+        if (cancelled) return;
+        if (r.ok) await adopt(r.session);
+        else if (r.reason === 'dead') {
+          setBooting(false);
+          return; // genuinely signed out — the gate sends them to /login
+        }
+        // 'unreachable': fall through on the stale token. Requests will fail and show cached data,
+        // which is the honest offline story rather than a login screen.
       }
       if (cancelled) return;
       restore();
+      setBooting(false);
     })();
     return () => {
       cancelled = true;
@@ -236,8 +255,8 @@ export function PatientSessionProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const sub = AppState.addEventListener('change', (next) => {
       if (next !== 'active' || !getPortalToken()) return;
-      refreshAccessToken().then((session) => {
-        if (session) void adopt(session);
+      refreshAccessToken().then((r) => {
+        if (r.ok) void adopt(r.session);
       });
     });
     return () => sub.remove();
@@ -303,8 +322,8 @@ export function PatientSessionProvider({ children }: { children: ReactNode }) {
   }, [hardSignOut]);
 
   const value = useMemo(
-    () => ({ patient, me, accessible, signedIn, pushBlocked, requestOtp, verifyOtp, establish, switchPatient, signOut }),
-    [patient, me, accessible, signedIn, pushBlocked, requestOtp, verifyOtp, establish, switchPatient, signOut],
+    () => ({ patient, me, accessible, signedIn, booting, pushBlocked, requestOtp, verifyOtp, establish, switchPatient, signOut }),
+    [patient, me, accessible, signedIn, booting, pushBlocked, requestOtp, verifyOtp, establish, switchPatient, signOut],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

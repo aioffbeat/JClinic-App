@@ -3,7 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { useQuery } from '@tanstack/react-query';
 import { dmy, portalApi } from '@/src/api';
 import type { PortalCarePlan, PortalPackage } from '@/src/portal-types';
-import { AsOf, Body, Caption, Card, H1, H2, Label, Loading, Notice, Pill, Screen, color, space } from '@/src/ui';
+import { AsOf, Body, Caption, Card, H1, H2, Label, Loading, Notice, PlanFields, Pill, Screen, color, space } from '@/src/ui';
 
 /**
  * My plan — what the doctor advised, and what the patient has already paid for.
@@ -28,6 +28,15 @@ export default function Plan() {
   });
 
   const p = plan.data;
+  /**
+   * Only the modalities the doctor actually advised, so its own presence is the content test.
+   * The server builds it deliberately (portal.service.ts) and this screen ignored it — which also
+   * meant the "No plan yet" notice was suppressed by something nothing rendered.
+   */
+  const tp = p?.treatmentPlan as
+    | { date?: string; medication?: { durationDays: number | null } | null; exercise?: unknown; yoga?: unknown; panchkarma?: unknown }
+    | null
+    | undefined;
   const bought = packages.data ?? [];
   const recs = recommended.data ?? [];
 
@@ -42,7 +51,7 @@ export default function Plan() {
         {plan.isLoading && <Loading />}
         {plan.isError && !p && <Notice title="Cannot load your plan" body="You may be offline." tone="bad" />}
 
-        {!!p?.diseases.length && (
+        {!!p?.diseases?.length && (
           <Card>
             <H2>Conditions</H2>
             {p.diseases.map((d, i) => (
@@ -56,7 +65,7 @@ export default function Plan() {
           </Card>
         )}
 
-        {!!p?.due.length && (
+        {!!p?.due?.length && (
           <Card>
             <H2>Tests coming up</H2>
             {p.due.slice(0, 8).map((t, i) => (
@@ -83,9 +92,33 @@ export default function Plan() {
             <StringList label="Daily routine" items={p.dietPlan.dinacharya} />
             <StringList label="Yoga asanas" items={p.dietPlan.yogaAsanas} />
             <StringList label="Pranayama" items={p.dietPlan.pranayama} />
-            {!!p.dietPlan.dinacharyaPlan && <Body muted>{p.dietPlan.dinacharyaPlan}</Body>}
-            {!!p.dietPlan.yogasanaAdvice && <Body muted>{p.dietPlan.yogasanaAdvice}</Body>}
-            {!!p.dietPlan.lifestyleNotes && <Body muted>{p.dietPlan.lifestyleNotes}</Body>}
+            {/* dinacharyaPlan is { existing, changes } — a Json column the doctor's diet tab writes
+                on every save. Handed to <Text> it threw "Objects are not valid as a React child"
+                and took the screen with it. PlanField renders whatever shape arrives. */}
+            <PlanFields
+              fields={[
+                { label: 'Your daily routine', value: p.dietPlan.dinacharyaPlan },
+                { label: 'What to eat', value: p.dietPlan.pathya },
+                { label: 'What to avoid', value: p.dietPlan.apathya },
+                { label: 'Yoga advice', value: p.dietPlan.yogasanaAdvice },
+                { label: 'Notes from your doctor', value: p.dietPlan.lifestyleNotes },
+              ]}
+            />
+          </Card>
+        )}
+
+        {!!tp && (
+          <Card>
+            <H2>What your doctor advised</H2>
+            {!!tp.date && <Caption>{`Advised ${dmy(String(tp.date))}`}</Caption>}
+            <PlanFields
+              fields={[
+                { label: 'Medicines', value: tp.medication?.durationDays ? `${tp.medication.durationDays} days` : null },
+                { label: 'Exercise', value: tp.exercise },
+                { label: 'Yoga', value: tp.yoga },
+                { label: 'Panchakarma', value: tp.panchkarma },
+              ]}
+            />
           </Card>
         )}
 

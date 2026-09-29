@@ -1,6 +1,5 @@
-import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
-import Svg, { Circle, Ellipse, G, Path } from 'react-native-svg';
-import { color, space } from './theme';
+import { Image, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import { color } from './theme';
 
 /**
  * The Dr. Joshi's wordmark, drawn rather than bitmapped.
@@ -32,50 +31,24 @@ export function Wordmark({ size = 'md', onDark = false }: { size?: 'sm' | 'md' |
 }
 
 /**
- * The app's emblem: a lotus, in the brand palette.
+ * The clinic's logo, as supplied.
  *
- * BRAND.md describes the clinic's mark as a peacock/lotus in teal, green, lime, blue and violet,
- * but only the wordmark exists as a file — so this is drawn from those tokens rather than traced
- * from an asset that was never supplied. Vector, so it is sharp wherever it appears.
+ * This used to be a lotus drawn in SVG, with a comment explaining that only a 176x68 wordmark
+ * existed as a file and upscaling it would look soft. The real 1920px mark arrived on 28 Sep 2026
+ * and the icons moved to it the same day; this screen did not, so the app opened on a symbol the
+ * clinic does not use. The asset is cut from that master by scripts/make-icons-from-logo.py, so
+ * it cannot drift from the launcher icon or the website.
  */
-export function LotusMark({ size = 40, onDark = false }: { size?: number; onDark?: boolean }) {
-  const petals = [
-    { rotate: -60, fill: color.royalBlue },
-    { rotate: -30, fill: color.teal },
-    { rotate: 0, fill: color.tealBright },
-    { rotate: 30, fill: color.leafGreen },
-    { rotate: 60, fill: color.lime },
-  ];
+export function BrandLockup({ style, width = 240 }: { style?: StyleProp<ViewStyle>; width?: number }) {
   return (
-    <Svg width={size} height={size} viewBox="0 0 100 100">
-      <G opacity={onDark ? 0.95 : 1}>
-        {petals.map((p) => (
-          <Ellipse
-            key={p.rotate}
-            cx={50}
-            cy={44}
-            rx={11}
-            ry={30}
-            fill={p.fill}
-            opacity={0.9}
-            origin="50, 74"
-            rotation={p.rotate}
-          />
-        ))}
-        {/* The seat the petals rise from. */}
-        <Path d="M22 76 Q50 92 78 76 Q50 84 22 76 Z" fill={color.petrolInk} opacity={onDark ? 0.5 : 0.85} />
-        <Circle cx={50} cy={72} r={5} fill={onDark ? '#FFFFFF' : color.petrolInk} opacity={0.9} />
-      </G>
-    </Svg>
-  );
-}
-
-/** Emblem + wordmark, the way the login and splash screens use it. */
-export function BrandLockup({ onDark = false, style }: { onDark?: boolean; style?: StyleProp<ViewStyle> }) {
-  return (
-    <View style={[{ alignItems: 'center', gap: space.md }, style]}>
-      <LotusMark size={64} onDark={onDark} />
-      <Wordmark size="lg" onDark={onDark} />
+    <View style={[{ alignItems: 'center' }, style]}>
+      <Image
+        source={require('../../assets/brand/logo-lockup.png')}
+        style={{ width, height: width * (205 / 720), borderRadius: 10 }}
+        resizeMode="contain"
+        accessibilityRole="image"
+        accessibilityLabel="Dr. Joshi's — Holistic Multi Specialty Clinic"
+      />
     </View>
   );
 }

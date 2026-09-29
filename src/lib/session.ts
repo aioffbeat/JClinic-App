@@ -40,17 +40,19 @@ export async function setRefreshToken(token: string | null) {
 /**
  * Exchange the stored refresh token for a fresh access token.
  *
- * Returns the new access token on success, or null if the session is gone — expired, revoked by
- * the user from another device, or (the case worth knowing about) killed by the server because a
- * consumed token was replayed. All of those are indistinguishable to us on purpose, and all mean
- * the same thing: sign in again.
+ * The result distinguishes "this session is over" from "I could not reach the server", and that
+ * distinction is the whole point. They used to collapse into one `null`, and the caller answered
+ * it by signing the patient out and DELETING the refresh token — directly under a comment
+ * promising to keep it. One cold start with no signal, or one 15-second timeout on a slow
+ * handset, ended the session permanently: the credential was gone, so every launch afterwards
+ * went to the login screen and cost another SMS.
  *
  * Concurrency matters here. Several screens can 401 at once on app resume, and each would try to
  * refresh; because the server ROTATES on every call, the second request would present a token the
  * first has already consumed and the server would treat it as theft and revoke everything. The
  * in-flight promise below is what stops a routine resume from logging the user out.
  */
-let inFlight: Promise<RefreshedSession | null> | null = null;
+let inFlight: Promise<RefreshResult> | null = null;
 
 /**
  * What the server hands back, not just the token.
@@ -66,12 +68,21 @@ export type RefreshedSession = {
   accessible?: { patientId: string; name: string; relation: string }[];
 };
 
-export function refreshAccessToken(): Promise<RefreshedSession | null> {
+/**
+ * `dead` is the only outcome that justifies signing someone out: the server said 401, or there is
+ * no refresh token to spend. `unreachable` covers offline, timeouts and 5xx — keep the tokens and
+ * let the next attempt succeed.
+ */
+export type RefreshResult =
+  | { ok: true; session: RefreshedSession }
+  | { ok: false; reason: 'dead' | 'unreachable' };
+
+export function refreshAccessToken(): Promise<RefreshResult> {
   if (inFlight) return inFlight;
 
-  const run = (async (): Promise<RefreshedSession | null> => {
+  const run = (async (): Promise<RefreshResult> => {
     const refreshToken = await getRefreshToken();
-    if (!refreshToken) return null;
+    if (!refreshToken) return { ok: false, reason: 'dead' };
 
     try {
       const res = await fetch(`${API_BASE}/v1/portal/auth/refresh`, {
@@ -85,17 +96,25 @@ export function refreshAccessToken(): Promise<RefreshedSession | null> {
         // 401 means the session is genuinely over — drop the token so we stop retrying with it.
         // Anything else (500, a proxy hiccup) might be transient, so the token is kept and the
         // next attempt can succeed.
-        if (res.status === 401) await setRefreshToken(null);
-        return null;
+        if (res.status === 401) {
+          await setRefreshToken(null);
+          return { ok: false, reason: 'dead' };
+        }
+        return { ok: false, reason: 'unreachable' };
       }
 
       const body = await res.json();
       if (body.refresh_token) await setRefreshToken(body.refresh_token);
-      if (!body.access_token) return null;
-      return { accessToken: body.access_token as string, patient: body.patient, accessible: body.accessible };
+      // A 200 with no token is the server contradicting itself; treat it as a hiccup rather than
+      // as grounds for throwing the credential away.
+      if (!body.access_token) return { ok: false, reason: 'unreachable' };
+      return {
+        ok: true,
+        session: { accessToken: body.access_token as string, patient: body.patient, accessible: body.accessible },
+      };
     } catch {
-      // Network failure. Keep the refresh token: the user is offline, not signed out.
-      return null;
+      // Network failure, or the 15s timeout. The user is offline, not signed out.
+      return { ok: false, reason: 'unreachable' };
     } finally {
       inFlight = null;
     }
@@ -103,6 +122,29 @@ export function refreshAccessToken(): Promise<RefreshedSession | null> {
 
   inFlight = run;
   return run;
+}
+
+/**
+ * Is this access token past its own expiry?
+ *
+ * Read from the JWT rather than tracked separately: the server decides the lifetime (about an
+ * hour) and the token states it, so anything we stored alongside would be a second copy able to
+ * disagree. Unreadable or unsigned-looking input counts as expired — spending a refresh token we
+ * did not need costs one request, while trusting a token we cannot read costs a wrong login
+ * screen. The 30-second margin stops a token expiring mid-flight.
+ */
+export function isExpired(token: string | null | undefined): boolean {
+  if (!token) return true;
+  const payload = token.split('.')[1];
+  if (!payload) return true;
+  try {
+    const json = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
+    const exp = (JSON.parse(json) as { exp?: number }).exp;
+    if (typeof exp !== 'number') return true;
+    return Date.now() >= exp * 1000 - 30_000;
+  } catch {
+    return true;
+  }
 }
 
 /** Everything a login call needs to identify this device to the API. */
