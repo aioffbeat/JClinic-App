@@ -32,6 +32,8 @@ export default function Lifestyle() {
   });
 
   const set = (k: keyof typeof form) => (v: string) => setForm((f) => ({ ...f, [k]: v }));
+  /** Set only when the server confirms a reading actually reached a member of staff. */
+  const [alerted, setAlerted] = useState(false);
 
   const add = useMutation({
     mutationFn: () =>
@@ -45,9 +47,12 @@ export default function Lifestyle() {
         bloodSugar: whole(form.bloodSugar),
         notes: form.notes.trim() || undefined,
       }),
-    onSuccess: () => {
+    onSuccess: (res) => {
       setForm({ dietSummary: '', exerciseMin: '', waterMl: '', weightKg: '', systolic: '', diastolic: '', bloodSugar: '', notes: '' });
       qc.invalidateQueries({ queryKey: ['portal', 'lifestyle'] });
+      // The server says whether a reading actually reached a person. Saying so only when it is
+      // true is the difference between a promise and a fact — and this is a vitals log.
+      setAlerted(!!(res as { alerted?: boolean } | undefined)?.alerted);
     },
   });
 
@@ -79,8 +84,8 @@ export default function Lifestyle() {
           <Field label="Notes" value={form.notes} onChange={set('notes')} />
 
           <Caption>
-            Your care team can see this. A blood pressure well outside the safe range alerts them
-            automatically — but if you feel unwell, call your clinic rather than waiting.
+            Your care team can see this. If you feel unwell, call your clinic rather than waiting —
+            do not rely on this log to raise the alarm.
           </Caption>
 
           <Button
@@ -91,6 +96,13 @@ export default function Lifestyle() {
             style={{ marginTop: space.md }}
           />
           {!!rangeError && <Notice title="Check this before saving" body={rangeError} tone="bad" />}
+          {alerted && (
+            <Notice
+              title="Your clinic has been alerted"
+              body="One of today's readings was outside the safe range and your care team has been notified."
+              tone="bad"
+            />
+          )}
           {add.isError && <Notice title="Could not save" body="Please try again once you have a connection." tone="bad" />}
         </Card>
 

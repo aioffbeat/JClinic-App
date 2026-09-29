@@ -1,8 +1,10 @@
 import { Stack, useLocalSearchParams } from 'expo-router';
-import { StyleSheet, Text, View } from 'react-native';
+import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useQuery } from '@tanstack/react-query';
 import { dmy, portalApi, type PortalVisit } from '@/src/api';
 import { Body, Caption, Card, H1, H2, Label, Loading, Notice, Pill, Screen, color, space } from '@/src/ui';
+// The file URL the server signs already carries /v1; it needs the origin and nothing else.
+import { API_BASE } from '@/src/lib';
 
 /**
  * One visit, as the doctor recorded it.
@@ -41,21 +43,36 @@ function VisitBody({ visit: v }: { visit: PortalVisit }) {
       {!!v.doctor && <Caption>{v.doctor}</Caption>}
       {!!v.clinic && <Caption>{v.clinic}</Caption>}
 
+      {/* A review consult can carry no note, no vitals and no diagnosis. Every section below is
+          content-gated, so without this the patient got a date and a blank page. */}
+      {!v.complaints.length && !v.vitals.length && !v.diagnoses.length && !v.note && !v.ayurveda
+        && !v.medicines.length && !v.files.length && !v.testsAdvised.length && (
+        <Notice
+          title="Nothing further recorded"
+          body="Your doctor did not add notes, vitals or prescriptions to this visit. Ask at the clinic if you expected something here."
+        />
+      )}
+
       <Section title="Why you came" show={!!v.complaints.length}>
         {v.complaints.map((c, i) => (
-          <Row key={`${c.name}-${i}`} k={c.name} v={c.severity ?? ''} />
+          // The name is the point; severity is optional and used to take the whole row with it.
+          <Row key={`${c.name}-${i}`} k={c.name} v={c.severity || 'noted'} />
         ))}
       </Section>
 
-      <Section title="How you were feeling" show={!!v.wellbeing}>
+      <Section
+        title="How you were feeling"
+        show={!!(v.wellbeing?.energy || v.wellbeing?.sleep || v.wellbeing?.generalCondition)}
+      >
         <Row k="Energy" v={v.wellbeing?.energy ?? '—'} />
         <Row k="Sleep" v={v.wellbeing?.sleep ?? '—'} />
         <Row k="Overall" v={v.wellbeing?.generalCondition ?? '—'} />
       </Section>
 
       <Section title="Vitals" show={!!v.vitals.length}>
-        {v.vitals.map((m) => (
-          <Row key={m.code} k={m.label} v={`${m.value ?? '—'}${m.unit ? ` ${m.unit}` : ''}`} />
+        {v.vitals.map((m, i) => (
+          // Vitals can repeat within one encounter (a BP taken twice), so the code is not a key.
+          <Row key={`${m.code}-${i}`} k={m.label} v={m.value == null ? '' : `${m.value}${m.unit ? ` ${m.unit}` : ''}`} />
         ))}
       </Section>
 
@@ -117,8 +134,45 @@ function VisitBody({ visit: v }: { visit: PortalVisit }) {
 
       <Section title="Tests advised" show={!!v.testsAdvised.length}>
         {v.testsAdvised.map((t, i) => (
-          <Row key={`${t.label}-${i}`} k={t.label} v={t.done ? 'Done' : 'Pending'} />
+          <View key={`${t.label}-${i}`}>
+            <Row k={t.label} v={t.done ? 'Done' : 'Pending'} />
+            {/* The note is where "fasting" and "before the next visit" live. */}
+            {!!t.note && <Caption>{t.note}</Caption>}
+          </View>
         ))}
+      </Section>
+
+      {/* Both of these were fetched on every visit and rendered nowhere. The web has shown them
+          since the portal existed, and a patient could not see a single document their clinic had
+          deliberately shared with them. */}
+      <Section title="Medicines prescribed" show={!!v.medicines.length}>
+        {v.medicines.map((m, i) => (
+          <View key={`${m.name}-${i}`} style={{ marginBottom: space.sm }}>
+            <Label>{m.name}</Label>
+            <Caption>
+              {[m.dose, m.frequencyText || m.frequency, m.durationDays ? `${m.durationDays} days` : null]
+                .filter(Boolean)
+                .join(' · ')}
+            </Caption>
+            {!!m.instructions && <Caption>{m.instructions}</Caption>}
+          </View>
+        ))}
+      </Section>
+
+      <Section title="Files your clinic shared" show={!!v.files.length}>
+        {v.files.map((f) => (
+          <Pressable
+            key={f.id}
+            onPress={() => Linking.openURL(`${API_BASE}${f.url}`)}
+            accessibilityRole="link"
+            style={{ paddingVertical: space.sm }}
+          >
+            <Label>{f.name}</Label>
+            <Caption>{f.caption || f.category}</Caption>
+          </Pressable>
+        ))}
+        {/* The signed ticket lasts an hour, which is the same deal the clinic's own file grid gets. */}
+        <Caption>Tap to open. Links expire after an hour — reopen this visit for a fresh one.</Caption>
       </Section>
     </>
   );
@@ -146,6 +200,29 @@ function Row({ k, v }: { k: string; v: string }) {
   );
 }
 
+/**
+ * A plan field the clinical templates stored as an object rather than a list. The doctor's diet
+ * tab writes { history, future } — what the patient has been doing, and what to change — and the
+ * web renders exactly those two. Anything else object-shaped is shown as its string values rather
+ * than swallowed, so a patient never loses advice to a shape nobody anticipated.
+ */
+function PlanProse({ label, value }: { label: string; value: unknown }) {
+  const rec = value as Record<string, unknown>;
+  const history = typeof rec.history === 'string' ? rec.history.trim() : '';
+  const future = typeof rec.future === 'string' ? rec.future.trim() : (typeof rec.text === 'string' ? rec.text.trim() : '');
+  if (history || future) {
+    return (
+      <>
+        {!!history && <Row k={`${label} — so far`} v={history} />}
+        {!!future && <Row k={`${label} — from now`} v={future} />}
+      </>
+    );
+  }
+  const rest = Object.values(rec).filter((x): x is string => typeof x === 'string' && !!x.trim());
+  if (!rest.length) return null;
+  return <Row k={label} v={rest.join(' · ')} />;
+}
+
 function Prose({ label, text }: { label: string; text?: string | null }) {
   if (!text) return null;
   return (
@@ -161,8 +238,12 @@ function Prose({ label, text }: { label: string; text?: string | null }) {
  * plain string or an object with a name. Both are rendered; anything else is skipped rather than
  * stringified into "[object Object]".
  */
-function ListRow({ label, items }: { label: string; items?: unknown[] | null }) {
-  const text = (items ?? [])
+function ListRow({ label, items }: { label: string; items?: unknown }) {
+  // Never assume an array. `pathya` and `apathya` are Json columns and the doctor's diet tab saves
+  // apathya as { history, future } on every save — .map on that threw and took the whole screen
+  // down, for any visit where the Diet tab had been filled in.
+  if (items && !Array.isArray(items)) return <PlanProse label={label} value={items} />;
+  const text = (Array.isArray(items) ? items : [])
     .map((it) => {
       if (typeof it === 'string') return it;
       if (it && typeof it === 'object') {

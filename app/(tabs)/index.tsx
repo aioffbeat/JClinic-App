@@ -7,6 +7,7 @@ import {
   AsOf, Body, Button, Caption, Card, Hero, HeroButton, Label, Loading, Notice,
   Screen, Tile, TileGrid, Wordmark, space,
 } from '@/src/ui';
+import { getAppVersion } from '@/src/lib';
 import { usePatientSession } from '@/src/session-context';
 
 /**
@@ -18,7 +19,7 @@ import { usePatientSession } from '@/src/session-context';
  */
 export default function Home() {
   const router = useRouter();
-  const { patient, me, accessible, signOut } = usePatientSession();
+  const { patient, me, accessible, pushBlocked, signOut } = usePatientSession();
 
   const followup = useQuery({ queryKey: ['portal', 'next-followup'], queryFn: () => portalApi.nextFollowup() });
   const bills = useQuery({ queryKey: ['portal', 'bills'], queryFn: () => portalApi.bills() });
@@ -139,6 +140,17 @@ export default function Home() {
         </Card>
       )}
 
+      {/* Dose reminders are the reason this app exists; a refused permission silently cancels them,
+          and nothing said so. Android only shows the system prompt once, so the way back is
+          Settings — hence a button rather than another prompt. */}
+      {pushBlocked && (
+        <Notice
+          title="Reminders are switched off"
+          body="Your phone is blocking notifications for this app, so medicine reminders will not arrive. Turn them on in Settings → Notifications."
+          tone="bad"
+        />
+      )}
+
       {followup.isError && bills.isError && (
         <Notice title="Cannot reach the clinic" body="You may be offline. Showing what we last had." tone="bad" />
       )}
@@ -155,6 +167,9 @@ export default function Home() {
         style={{ marginTop: space.sm }}
       />
       <Caption>Your records are private to you.</Caption>
+      {/* Which build is this? Two apps can sit on one phone — the Play one and a sideloaded test
+          build — and without this the only way to tell them apart is to notice a missing feature. */}
+      <Caption>{`Version ${getAppVersion()}`}</Caption>
       <AsOf at={followup.dataUpdatedAt || null} />
     </Screen>
   );

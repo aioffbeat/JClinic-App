@@ -16,7 +16,7 @@ const SUFFIX = process.env.JCLINIC_PACKAGE_SUFFIX ?? '';
 const config: ExpoConfig = {
   name: SUFFIX ? `Dr. Joshi's${SUFFIX}` : "Dr. Joshi's",
   slug: 'jclinic-patient',
-  version: '0.1.0',
+  version: '0.2.0',
   orientation: 'portrait',
   // Deep-link scheme. Push payloads carry a target so tapping a dose reminder opens Medicines
   // rather than the home screen.
@@ -67,6 +67,10 @@ const config: ExpoConfig = {
     ],
 
     'expo-secure-store',
+    // The native date picker, for date of birth on the registration form. A typed YYYY-MM-DD was
+    // rejected by the server's @IsDateString for anyone who wrote 01/01/1990 — a date a patient
+    // cannot mistype is a better fix than a better error message.
+    '@react-native-community/datetimepicker',
     [
       'expo-notifications',
       {

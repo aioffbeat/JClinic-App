@@ -124,10 +124,7 @@ export default function Labs() {
                 <Body>{u.fileName}</Body>
                 <Caption>{new Date(u.createdAt).toLocaleDateString()}</Caption>
               </View>
-              <Pill
-                text={u.reviewedAt ? 'Reviewed' : u.status}
-                tone={u.reviewedAt ? 'ok' : 'neutral'}
-              />
+              <Pill text={uploadState(u.status, u.reviewedAt).text} tone={uploadState(u.status, u.reviewedAt).tone} />
             </View>
           ))}
         </Card>
@@ -148,6 +145,19 @@ function toneFor(f: string): 'ok' | 'warn' | 'bad' | 'neutral' {
 function colourFor(f: string | null) {
   if (!f) return color.ink;
   return flag[f as keyof typeof flag] ?? color.ink;
+}
+
+/**
+ * Raw upload states are for the clinic, not the patient — and a REJECTED upload carries a
+ * reviewedAt, so "reviewed ? green Reviewed" told a patient their unusable photo had been filed.
+ * Same sentences the web portal shows.
+ */
+function uploadState(status: string, reviewedAt?: string | null): { text: string; tone: 'ok' | 'bad' | 'neutral' } {
+  if (status === 'rejected') return { text: 'Not added — check with the clinic', tone: 'bad' };
+  if (status === 'failed') return { text: 'Could not be read — please re-upload', tone: 'bad' };
+  if (reviewedAt) return { text: 'Added to your record', tone: 'ok' };
+  if (status === 'review') return { text: 'With your clinic', tone: 'neutral' };
+  return { text: 'Being processed', tone: 'neutral' };
 }
 
 const styles = StyleSheet.create({

@@ -133,7 +133,10 @@ export default function Plan() {
           </Card>
         )}
 
-        {!plan.isLoading && !p?.diseases.length && !bought.length && !recs.length && (
+        {/* Tests due and the diet plan are a plan too — this notice used to sit directly above
+            both of them. */}
+        {!plan.isLoading && !p?.diseases.length && !bought.length && !recs.length
+          && !p?.due?.length && !p?.dietPlan && !p?.treatmentPlan && (
           <Notice title="No plan yet" body="Your care plan appears here once your doctor has set one." />
         )}
 

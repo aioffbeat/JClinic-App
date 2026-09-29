@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
+import { useFocusEffect } from 'expo-router';
 import { StyleSheet, Text, TextInput, View } from 'react-native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { portalApi } from '@/src/api';
@@ -18,12 +19,30 @@ export default function Chat() {
   const qc = useQueryClient();
   const [draft, setDraft] = useState('');
 
+  /**
+   * Poll only while this tab is actually on screen.
+   *
+   * React Navigation keeps a visited tab mounted, and React Query on React Native has no window to
+   * lose focus, so this poll went on running from behind Home — and GET /portal/messages marks
+   * every unread staff message read as a side effect of being fetched. A reply was therefore read
+   * within 30 seconds of arriving, without the patient seeing it, and the unread count on Home was
+   * permanently 0. Fixing it here rather than on the server keeps "opening the thread marks it
+   * read", which is the behaviour the web relies on.
+   */
+  const [onScreen, setOnScreen] = useState(false);
+  useFocusEffect(
+    useCallback(() => {
+      setOnScreen(true);
+      return () => setOnScreen(false);
+    }, []),
+  );
+
   const thread = useQuery({
     queryKey: ['portal', 'messages'],
     queryFn: () => portalApi.messages(),
-    // Polled, not pushed: a staff reply also fires a push notification. This only keeps an open
-    // thread current while the patient is sitting on it.
-    refetchInterval: 30_000,
+    // A staff reply also fires a push; this only keeps an open thread current while it is being read.
+    refetchInterval: onScreen ? 30_000 : false,
+    enabled: onScreen,
   });
 
   // A closed conversation stays readable but accepts nothing further — server-enforced both ways,

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Stack, useRouter } from 'expo-router';
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { ApiError, portalApi, type PublicClinic } from '@/src/api';
 import { describeDevice } from '@/src/lib';
@@ -39,6 +40,11 @@ function addDays(d: Date, n: number) {
 function digits(v: string) {
   return v.replace(/[^\d+]/g, '');
 }
+/** 1990-01-31 → 31 Jan 1990, for the button that opens the picker. */
+function prettyDob(iso: string) {
+  const d = new Date(`${iso}T00:00:00`);
+  return Number.isNaN(+d) ? iso : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+}
 function dayLabel(iso: string) {
   const d = new Date(`${iso}T00:00:00`);
   return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
@@ -72,6 +78,7 @@ export default function Register() {
   // not happen to land on the grid — which is nearly everyone.
   const [date, setDate] = useState(() => isoDate(addDays(new Date(), 1)));
   const [slot, setSlot] = useState<string | null>(null);
+  const [dobOpen, setDobOpen] = useState(false);
 
   const clinics = useQuery({ queryKey: ['portal', 'clinics'], queryFn: () => portalApi.publicClinics() });
 
@@ -285,14 +292,37 @@ export default function Register() {
                   ))}
                 </View>
 
-                <Label>{dobOk ? 'Date of birth (optional)' : 'Date of birth — use YYYY-MM-DD, e.g. 1990-01-31'}</Label>
-                <TextInput
-                  style={styles.input}
-                  value={f.dob}
-                  onChangeText={set('dob')}
-                  placeholder="YYYY-MM-DD"
-                  placeholderTextColor={color.slate}
-                />
+                <Label>Date of birth (optional)</Label>
+                {/* The OS calendar rather than a typed date: the server takes @IsDateString, and a
+                    patient writing 01/01/1990 only found out after spending an OTP. */}
+                <Pressable onPress={() => setDobOpen(true)} style={styles.input} accessibilityRole="button">
+                  <Text style={{ color: f.dob ? color.petrolInk : color.slate, fontSize: 16 }}>
+                    {f.dob ? prettyDob(f.dob) : 'Tap to choose your date of birth'}
+                  </Text>
+                </Pressable>
+                {!!f.dob && (
+                  <Pressable onPress={() => set('dob')('')} accessibilityRole="button">
+                    <Caption>Clear date of birth</Caption>
+                  </Pressable>
+                )}
+                {dobOpen && (
+                  <DateTimePicker
+                    value={f.dob ? new Date(`${f.dob}T00:00:00`) : new Date(1990, 0, 1)}
+                    mode="date"
+                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                    maximumDate={new Date()}
+                    minimumDate={new Date(1900, 0, 1)}
+                    onChange={(e, picked) => {
+                      // Android fires once and dismisses itself; iOS keeps the spinner up.
+                      if (Platform.OS !== 'ios') setDobOpen(false);
+                      if (e.type === 'dismissed' || !picked) return;
+                      set('dob')(isoDate(picked));
+                    }}
+                  />
+                )}
+                {dobOpen && Platform.OS === 'ios' && (
+                  <Button title="Done" variant="secondary" onPress={() => setDobOpen(false)} />
+                )}
 
                 <Label>{emailOk ? 'Email (optional)' : 'Email — that does not look like an email address'}</Label>
                 <TextInput

@@ -1,10 +1,12 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AppState } from 'react-native';
+import { router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getPortalName, getPortalToken, portalApi, setPortalSession } from '@/src/api';
 import {
   clearQueryCache,
   clearSession,
+  hydrateApiStorage,
   describeDevice,
   getDeviceId,
   refreshAccessToken,
@@ -49,6 +51,8 @@ type SessionState = {
   /** Every chart reachable from this phone — self plus any caregiver grants. */
   accessible: AccessiblePatient[];
   signedIn: boolean;
+  /** True when the OS has refused notifications — reminders cannot arrive until that changes. */
+  pushBlocked: boolean;
   requestOtp: (phone: string) => Promise<void>;
   verifyOtp: (phone: string, code: string) => Promise<void>;
   /** For self-registration, which signs the patient in through a different endpoint. */
@@ -81,8 +85,18 @@ export function PatientSessionProvider({ children }: { children: ReactNode }) {
   const [me, setMe] = useState<PortalMe | null>(null);
   const [accessible, setAccessible] = useState<AccessiblePatient[]>([]);
   const [signedIn, setSignedIn] = useState(false);
+  /** Notifications were refused at the OS level. Worth saying out loud: this app exists to remind. */
+  const [pushBlocked, setPushBlocked] = useState(false);
   const recovering = useRef(false);
 
+  /**
+   * Drop the session AND leave the screen.
+   *
+   * Clearing state is not enough: the entry gate in app/index.tsx is the only thing that reads
+   * `signedIn`, and it is not mounted once the patient is inside the tabs. Sign out from Home and
+   * the tabs stayed exactly where they were, now unauthenticated — which read as a button that
+   * does nothing, while every query underneath quietly began to 401.
+   */
   const hardSignOut = useCallback(async () => {
     setPortalSession(null);
     await clearSession();
@@ -91,6 +105,7 @@ export function PatientSessionProvider({ children }: { children: ReactNode }) {
     setMe(null);
     setAccessible([]);
     setSignedIn(false);
+    router.replace('/login');
   }, []);
 
   /**
@@ -146,10 +161,49 @@ export function PatientSessionProvider({ children }: { children: ReactNode }) {
     };
   }, [recover]);
 
-  // Restore whatever survived the last run. bootstrapApi() has already hydrated storage by now.
+  /**
+   * Restore whatever survived the last run.
+   *
+   * The comment here used to say bootstrapApi() had already hydrated storage by now. It had not:
+   * this provider wraps the component that calls it, so this effect ran first, every cold start,
+   * and read a token map that was still empty — which sent a perfectly good session to the login
+   * screen and made every launch cost an SMS. hydrateApiStorage() is idempotent and resolves
+   * immediately once done, so awaiting it here is both correct and free.
+   *
+   * The access token also only lives about an hour, so after any real absence there is nothing to
+   * restore even when hydration works. The refresh token is the one that survives, and it is what
+   * the session actually rests on.
+   */
   useEffect(() => {
-    if (!getPortalToken()) return;
+    let cancelled = false;
+    void (async () => {
+      await hydrateApiStorage();
+      if (cancelled) return;
+
+      if (!getPortalToken()) {
+        const renewed = await refreshAccessToken();
+        if (cancelled || !renewed) return; // no refresh token, or the session is genuinely over
+        await adopt(renewed);
+      }
+      if (cancelled) return;
+      restore();
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- boot-once; adopt/restore are stable
+
+  function restore() {
     setSignedIn(true);
+
+    /**
+     * Push registration belongs on EVERY launch — push.ts says so in its own header — but the only
+     * caller was sign-in. Expo reissues tokens on OS updates, reinstalls and backup restores, and
+     * the server nulls the stored token the moment Expo reports one as dead; either way the patient
+     * silently stops receiving dose reminders until they happen to sign out and in again. Every
+     * device_session in production had a null push_token when this was found.
+     */
+    void setUpPush().then((r) => setPushBlocked(!r.ok && r.reason === 'denied'));
 
     const cachedName = getPortalName();
     const cachedId = getCachedPatientId();
@@ -170,7 +224,7 @@ export function PatientSessionProvider({ children }: { children: ReactNode }) {
       .accessPatients()
       .then((rows) => setAccessible(rows.map((r) => ({ patientId: r.id, name: r.name, relation: r.relation }))))
       .catch(() => {});
-  }, []);
+  }
 
   /**
    * Renew proactively when the app returns to the foreground.
@@ -213,7 +267,7 @@ export function PatientSessionProvider({ children }: { children: ReactNode }) {
     setSignedIn(true);
     portalApi.me().then(setMe).catch(() => {});
     // Fire-and-forget: a declined notification permission must not fail a successful sign-in.
-    void setUpPush();
+    void setUpPush().then((r) => setPushBlocked(!r.ok && r.reason === 'denied'));
   }, []);
 
   const verifyOtp = useCallback(async (phone: string, code: string) => {
@@ -249,8 +303,8 @@ export function PatientSessionProvider({ children }: { children: ReactNode }) {
   }, [hardSignOut]);
 
   const value = useMemo(
-    () => ({ patient, me, accessible, signedIn, requestOtp, verifyOtp, establish, switchPatient, signOut }),
-    [patient, me, accessible, signedIn, requestOtp, verifyOtp, establish, switchPatient, signOut],
+    () => ({ patient, me, accessible, signedIn, pushBlocked, requestOtp, verifyOtp, establish, switchPatient, signOut }),
+    [patient, me, accessible, signedIn, pushBlocked, requestOtp, verifyOtp, establish, switchPatient, signOut],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
