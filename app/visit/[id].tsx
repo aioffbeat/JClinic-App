@@ -1,8 +1,8 @@
-import { Stack, useLocalSearchParams } from 'expo-router';
+import { Stack, router, useLocalSearchParams } from 'expo-router';
 import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useQuery } from '@tanstack/react-query';
 import { dmy, portalApi, type PortalVisit } from '@/src/api';
-import { Body, Caption, Card, H1, H2, Label, Loading, Notice, Pill, Screen, color, space } from '@/src/ui';
+import { Body, Button, Caption, Card, H1, H2, Label, Loading, Notice, Pill, Screen, color, space } from '@/src/ui';
 // The file URL the server signs already carries /v1; it needs the origin and nothing else.
 import { API_BASE } from '@/src/lib';
 
@@ -158,6 +158,15 @@ function VisitBody({ visit: v }: { visit: PortalVisit }) {
           </View>
         ))}
       </Section>
+
+      {/* Straight from the visit being read to rating it, rather than waiting for the prompt on
+          Home to be noticed. The doctor's score reaches that doctor's own notifications. */}
+      <Button
+        title="Rate this visit"
+        variant="secondary"
+        onPress={() => router.push('/feedback')}
+        style={{ marginTop: space.lg }}
+      />
 
       <Section title="Files your clinic shared" show={!!v.files.length}>
         {v.files.map((f) => (

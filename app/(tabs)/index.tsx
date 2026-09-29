@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useRouter } from 'expo-router';
-import { Linking } from 'react-native';
+import { Linking, View } from 'react-native';
 import { useQuery } from '@tanstack/react-query';
 import { dmy, portalApi, type PortalBill } from '@/src/api';
 import {
@@ -41,6 +41,18 @@ export default function Home() {
   const dosesDue = (meds.data ?? []).filter((m) => m.anyDue).length;
   const visits = history.data?.length ?? 0;
   const pendingFeedback = feedback.data?.length ?? 0;
+  const askAbout = feedback.data?.find((f) => f.visit)?.visit ?? null;
+
+  /**
+   * Who to ring. Resolved server-side to the branch this patient actually deals with, and served
+   * as finished tel:/wa.me links so the app is not the fourth place to re-derive the 91 prefix.
+   * Long staleTime: a clinic's phone number is not news.
+   */
+  const contact = useQuery({
+    queryKey: ['portal', 'contact'],
+    queryFn: () => portalApi.contact(),
+    staleTime: 6 * 60 * 60_000,
+  });
   const firstName = patient?.name?.split(' ')[0] ?? '';
   /**
    * The device clock, not the server's: the patient is standing in their own morning, and the one
@@ -128,8 +140,14 @@ export default function Home() {
 
       {pendingFeedback > 0 && (
         <Card>
-          <Label>Your clinic asked for feedback</Label>
-          <Body muted>It takes under a minute, and only your clinic sees it unless you choose otherwise.</Body>
+          {/* The row has always known which visit and which doctor; the API just never said so,
+              and an anonymous "give feedback" is a worse question than a specific one. */}
+          <Label>{askAbout ? `How was your visit on ${dmy(askAbout.at)}?` : 'Your clinic asked for feedback'}</Label>
+          <Body muted>
+            {askAbout?.doctor
+              ? `With ${askAbout.doctor}${askAbout.clinic ? ` at ${askAbout.clinic}` : ''}. It takes under a minute, and only your clinic sees it unless you choose otherwise.`
+              : 'It takes under a minute, and only your clinic sees it unless you choose otherwise.'}
+          </Body>
           <Button
             title="Give feedback"
             variant="secondary"
@@ -149,6 +167,35 @@ export default function Home() {
             onPress={() => router.push('/family')}
             style={{ marginTop: space.md }}
           />
+        </Card>
+      )}
+
+      {(!!contact.data?.call || !!contact.data?.whatsapp) && (
+        <Card>
+          <Label>{contact.data?.fallback ? 'Talk to us' : `Talk to ${contact.data?.clinic?.name ?? 'your clinic'}`}</Label>
+          <Body muted>
+            {contact.data?.fallback
+              ? 'Our helpline, for anything urgent or anything you would rather say out loud.'
+              : 'For anything urgent, or anything you would rather say out loud.'}
+          </Body>
+          <View style={{ flexDirection: 'row', gap: space.sm, marginTop: space.md }}>
+            {!!contact.data?.call && (
+              <Button
+                title="Call the clinic"
+                variant="secondary"
+                onPress={() => Linking.openURL(contact.data!.call!.tel).catch(() => {})}
+                style={{ flex: 1 }}
+              />
+            )}
+            {!!contact.data?.whatsapp && (
+              <Button
+                title="Chat on WhatsApp"
+                variant="secondary"
+                onPress={() => Linking.openURL(contact.data!.whatsapp!.url).catch(() => {})}
+                style={{ flex: 1 }}
+              />
+            )}
+          </View>
         </Card>
       )}
 

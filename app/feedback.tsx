@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Stack } from 'expo-router';
 import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { portalApi } from '@/src/api';
+import { dmy, portalApi } from '@/src/api';
 import { Body, Button, Caption, Card, H1, H2, Label, Loading, Notice, Pill, Screen, color, space } from '@/src/ui';
 
 /**
@@ -18,10 +18,11 @@ export default function Feedback() {
   const pending = useQuery({ queryKey: ['portal', 'feedback', 'pending'], queryFn: () => portalApi.feedbackPending() });
   const history = useQuery({ queryKey: ['portal', 'feedback', 'history'], queryFn: () => portalApi.feedbackHistory() });
 
-  const [ratings, setRatings] = useState<{ overall: number; reception: number; doctor: number }>({
+  const [ratings, setRatings] = useState<{ overall: number; reception: number; doctor: number; therapist: number }>({
     overall: 0,
     reception: 0,
     doctor: 0,
+    therapist: 0,
   });
   const [comment, setComment] = useState('');
   const [publish, setPublish] = useState(false);
@@ -31,7 +32,7 @@ export default function Feedback() {
     qc.invalidateQueries({ queryKey: ['portal', 'feedback', 'history'] });
   };
   const reset = () => {
-    setRatings({ overall: 0, reception: 0, doctor: 0 });
+    setRatings({ overall: 0, reception: 0, doctor: 0, therapist: 0 });
     setComment('');
     setPublish(false);
   };
@@ -42,6 +43,7 @@ export default function Feedback() {
         overallRating: ratings.overall || undefined,
         receptionRating: ratings.reception || undefined,
         doctorRating: ratings.doctor || undefined,
+        therapistRating: ratings.therapist || undefined,
         comment: comment.trim() || undefined,
       }),
     onSuccess: () => { reset(); invalidate(); },
@@ -53,6 +55,7 @@ export default function Feedback() {
         overallRating: ratings.overall,
         receptionRating: ratings.reception || undefined,
         doctorRating: ratings.doctor || undefined,
+        therapistRating: ratings.therapist || undefined,
         comment: comment.trim() || undefined,
         publishConsent: publish,
       }),
@@ -76,16 +79,31 @@ export default function Feedback() {
         {(pending.isLoading || history.isLoading) && <Loading />}
 
         <Card>
-          <H2>{target ? 'Your clinic asked how it went' : 'Share your experience'}</H2>
+          <H2>
+            {target?.visit
+              ? `Your visit on ${dmy(target.visit.at)}`
+              : target ? 'Your clinic asked how it went' : 'Share your experience'}
+          </H2>
           <Body muted>
-            {target
-              ? 'This stays between you and your clinic.'
-              : 'Tell your clinic how you found your care.'}
+            {target?.visit?.doctor
+              // The doctor's rating goes to that doctor's own notifications, so say whose visit it
+              // is. An anonymous "rate your care" invites an anonymous answer.
+              ? `With ${target.visit.doctor}${target.visit.clinic ? ` at ${target.visit.clinic}` : ''}. This stays between you and your clinic.`
+              : target
+                ? 'This stays between you and your clinic.'
+                : 'Tell your clinic how you found your care.'}
           </Body>
 
           <Stars label="Overall" value={ratings.overall} onChange={(v) => setRatings((r) => ({ ...r, overall: v }))} />
           <Stars label="Front desk" value={ratings.reception} onChange={(v) => setRatings((r) => ({ ...r, reception: v }))} />
-          <Stars label="Doctor" value={ratings.doctor} onChange={(v) => setRatings((r) => ({ ...r, doctor: v }))} />
+          <Stars
+            label={target?.visit?.doctor ?? 'Doctor'}
+            value={ratings.doctor}
+            onChange={(v) => setRatings((r) => ({ ...r, doctor: v }))}
+          />
+          {/* Accepted by the API and collected on the web since the start; the app simply never
+              asked, so therapy patients had no way to rate the people who treated them. */}
+          <Stars label="Therapy & care team" value={ratings.therapist} onChange={(v) => setRatings((r) => ({ ...r, therapist: v }))} />
 
           <TextInput
             style={styles.input}

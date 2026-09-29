@@ -3559,6 +3559,30 @@ export interface SelfRegisterData { phone: string; code: string; fullName: strin
    *  form sends none of these. Declared because the app spreads them in — typecheck does not catch
    *  excess properties through a spread, so the omission was invisible until the server rejected it. */
   deviceId?: string; platform?: string; appVersion?: string; deviceName?: string }
+/**
+ * A feedback request the patient has not answered, and the visit it is about. `visit` is null for
+ * the 15-day treatment check-in and for self-submitted feedback, neither of which has an encounter.
+ */
+export interface PendingFeedback {
+  id: string;
+  trigger: string;
+  createdAt: string;
+  visit: { encounterId: string; at: string; clinic: string | null; doctor: string | null } | null;
+}
+
+/**
+ * Finished tel:/wa.me links, not numbers — the 91-prefix rule that wa.me needs lives on the server
+ * so a second copy cannot drift. `fallback` means these are the chain helpline rather than the
+ * branch's own line, so a caller can word it honestly.
+ */
+export interface PortalContact {
+  clinic: { id: string; name: string } | null;
+  source: 'upcoming_appointment' | 'recent_visit' | 'home_clinic' | null;
+  call: { display: string; tel: string } | null;
+  whatsapp: { display: string; url: string } | null;
+  fallback: boolean;
+}
+
 export interface PublicClinic { id: string; name: string; code: string; address?: string | null; visitingCharge: number; upiId: string; upiName: string; razorpayEnabled: boolean }
 /**
  * What /portal/public/slots returns. Unlike the signed-in SlotsResponse these are already filtered
@@ -3704,7 +3728,9 @@ export const portalApi = {
   dueTests: () => papi<{ diseases: { name: string; stage: number | null }[]; tests: PortalDueTest[] }>('/portal/due-tests'),
   bookTests: (labPartnerId: string, partnerCodes: string[]) => papi<{ id: string; requested: number }>('/portal/lab-orders', { method: 'POST', body: JSON.stringify({ labPartnerId, partnerCodes }) }),
   // feedback — answering a request the clinic sent ("appreciate the team"). Never published.
-  feedbackPending: () => papi<{ id: string; trigger: string; createdAt: string }[]>('/portal/feedback'),
+  feedbackPending: () => papi<PendingFeedback[]>('/portal/feedback'),
+  /** Who to ring and which WhatsApp, for the branch this patient actually deals with. */
+  contact: () => papi<PortalContact>('/portal/contact'),
   submitFeedback: (id: string, data: { receptionRating?: number; doctorRating?: number; therapistRating?: number; overallRating?: number; comment?: string }) =>
     papi<{ status: string }>(`/portal/feedback/${id}`, { method: 'POST', body: JSON.stringify(data) }),
   // feedback — the patient sharing their experience unprompted. The only path that can reach the
