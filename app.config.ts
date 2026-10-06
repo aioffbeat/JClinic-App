@@ -16,7 +16,7 @@ const SUFFIX = process.env.JCLINIC_PACKAGE_SUFFIX ?? '';
 const config: ExpoConfig = {
   name: SUFFIX ? `Dr. Joshi's${SUFFIX}` : "Dr. Joshi's",
   slug: 'jclinic-patient',
-  version: '0.3.0',
+  version: '0.3.1',
   orientation: 'portrait',
   // Deep-link scheme. Push payloads carry a target so tapping a dose reminder opens Medicines
   // rather than the home screen.
