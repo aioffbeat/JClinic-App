@@ -51,6 +51,17 @@ const config: ExpoConfig = {
     // here asks for contacts, location or storage, and nothing should — Play's Data safety form
     // has to be answered for every permission listed.
     permissions: ['CAMERA', 'POST_NOTIFICATIONS', 'USE_BIOMETRIC', 'USE_FINGERPRINT'],
+    // Added by libraries, used by nothing here: expo-image-picker asks for the microphone (video
+    // capture) and the template asks to draw over other apps. Both showed up in the 0.3.0 manifest,
+    // and a permission the Data safety form does not cover is a review question we do not need.
+    blockedPermissions: [
+      'android.permission.RECORD_AUDIO',
+      'android.permission.SYSTEM_ALERT_WINDOW',
+      'android.permission.READ_EXTERNAL_STORAGE',
+      'android.permission.WRITE_EXTERNAL_STORAGE',
+    ],
+    // Medical records must not ride along in the phone's Google backup.
+    allowBackup: false,
   },
 
   plugins: [
@@ -66,6 +77,9 @@ const config: ExpoConfig = {
       { image: './assets/splash.png', imageWidth: 200, resizeMode: 'contain', backgroundColor: '#F2F7F6' },
     ],
 
+    // Photos only. Without this the plugin also adds a microphone permission (Android) and a
+    // microphone usage string (iOS) for video recording, which this app never does.
+    ['expo-image-picker', { microphonePermission: false }],
     'expo-secure-store',
     // The native date picker, for date of birth on the registration form. A typed YYYY-MM-DD was
     // rejected by the server's @IsDateString for anyone who wrote 01/01/1990 — a date a patient
