@@ -157,7 +157,9 @@ The app has **no tracking**, so no App Tracking Transparency prompt is needed.
 On the version page: select the build, then fill in **App Review Information**:
 
 - **Sign-in required: yes.** Enable the review bypass on the VPS first (`PLAYSTORE.md` §6), then
-  give the reviewer phone `7710001103` (+91) and the fixed code.
+  give the reviewer the demo number and fixed code set in `REVIEW_OTP_PHONE` / `REVIEW_OTP_CODE`
+  on the server. Neither is written down in this repository: while the bypass is armed the pair is
+  a working login to a real patient's record.
 - **Notes:** paste something like this:
 
   > Dr. Joshi's is the patient app of a registered clinic (<legal entity>). Patients view their own
