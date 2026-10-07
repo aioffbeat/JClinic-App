@@ -36,10 +36,8 @@ const config: ExpoConfig = {
       // Say what the app does with the data, not what the API is called.
       NSCameraUsageDescription:
         'Take a photo of a lab report or prescription to share it with your clinic.',
-      NSPhotoLibraryUsageDescription:
-        'Attach a lab report you already have saved on your phone.',
-      NSFaceIDUsageDescription:
-        'Unlock the app with Face ID so your medical records stay private if your phone is left unlocked.',
+      // No photo-library or Face ID strings: labs.tsx uses the camera only and there is no biometric
+      // unlock. App Review reads every purpose string and asks to see the feature behind it.
     },
   },
 
@@ -50,7 +48,7 @@ const config: ExpoConfig = {
     // Deliberately minimal. CAMERA is requested by expo-image-picker at the point of use; nothing
     // here asks for contacts, location or storage, and nothing should — Play's Data safety form
     // has to be answered for every permission listed.
-    permissions: ['CAMERA', 'POST_NOTIFICATIONS', 'USE_BIOMETRIC', 'USE_FINGERPRINT'],
+    permissions: ['CAMERA', 'POST_NOTIFICATIONS'],
     // Added by libraries, used by nothing here: expo-image-picker asks for the microphone (video
     // capture) and the template asks to draw over other apps. Both showed up in the 0.3.0 manifest,
     // and a permission the Data safety form does not cover is a review question we do not need.
@@ -59,6 +57,8 @@ const config: ExpoConfig = {
       'android.permission.SYSTEM_ALERT_WINDOW',
       'android.permission.READ_EXTERNAL_STORAGE',
       'android.permission.WRITE_EXTERNAL_STORAGE',
+      'android.permission.USE_BIOMETRIC',
+      'android.permission.USE_FINGERPRINT',
     ],
     // Medical records must not ride along in the phone's Google backup.
     allowBackup: false,
@@ -79,8 +79,9 @@ const config: ExpoConfig = {
 
     // Photos only. Without this the plugin also adds a microphone permission (Android) and a
     // microphone usage string (iOS) for video recording, which this app never does.
-    ['expo-image-picker', { microphonePermission: false }],
-    'expo-secure-store',
+    ['expo-image-picker', { microphonePermission: false, photosPermission: false }],
+    // false: the plugin otherwise adds a generic Face ID string, and the app has no biometric unlock.
+    ['expo-secure-store', { faceIDPermission: false }],
     // The native date picker, for date of birth on the registration form. A typed YYYY-MM-DD was
     // rejected by the server's @IsDateString for anyone who wrote 01/01/1990 — a date a patient
     // cannot mistype is a better fix than a better error message.
