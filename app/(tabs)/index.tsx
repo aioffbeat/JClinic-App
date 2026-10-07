@@ -225,6 +225,13 @@ export default function Home() {
         onPress={() => Linking.openURL('https://clinic.drjoshis.in/legal/deletion')}
         style={{ marginTop: space.sm }}
       />
+      {/* Both stores want the privacy policy reachable from inside the app, not only the listing. */}
+      <Button
+        title="Privacy policy"
+        variant="secondary"
+        onPress={() => Linking.openURL('https://clinic.drjoshis.in/legal/privacy')}
+        style={{ marginTop: space.sm }}
+      />
       <Caption>Your records are private to you.</Caption>
       {/* Which build is this? Two apps can sit on one phone — the Play one and a sideloaded test
           build — and without this the only way to tell them apart is to notice a missing feature. */}

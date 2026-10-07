@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { KeyboardAvoidingView, Platform, StyleSheet, TextInput, View } from 'react-native';
+import { KeyboardAvoidingView, Linking, Platform, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ApiError } from '@/src/api';
 import { Body, BrandLockup, Button, Caption, Card, Notice, color, space } from '@/src/ui';
@@ -128,7 +128,15 @@ export default function Login() {
 
         <Caption>
           Your records are private to you. We only ever send a code to a number already registered
-          with the clinic.
+          with the clinic.{' '}
+          {/* Both stores want the privacy policy reachable inside the app, before sign-in too. */}
+          <Text
+            onPress={() => Linking.openURL('https://clinic.drjoshis.in/legal/privacy')}
+            style={{ textDecorationLine: 'underline' }}
+            accessibilityRole="link"
+          >
+            Privacy policy
+          </Text>
         </Caption>
       </View>
     </KeyboardAvoidingView>
