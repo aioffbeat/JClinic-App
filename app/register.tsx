@@ -50,7 +50,11 @@ function dayLabel(iso: string) {
   return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
 }
 function timeLabel(iso: string) {
-  return new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  // An en-IN phone writes "9:30 am", and the chip's textTransform: 'capitalize' turned that into
+  // "9:30 Am". Upper-case the marker here so every locale reads "9:30 AM".
+  return new Date(iso)
+    .toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+    .replace(/\b(am|pm)\b/i, (m) => m.toUpperCase());
 }
 
 export default function Register() {

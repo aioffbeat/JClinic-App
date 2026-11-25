@@ -81,7 +81,9 @@ export default function DueTests() {
                     {t.lastDone
                       ? `Last done ${new Date(t.lastDone).toLocaleDateString()}`
                       : 'Not done before'}
-                    {t.frequency ? ` · every ${t.frequency}` : ''}
+                    {/* The label is already a phrase ("Every 3 months", "With each renal panel"), so
+                        prefixing "every" printed "every Every 3 months". */}
+                    {t.frequency ? ` · Repeat: ${t.frequency}` : ''}
                   </Caption>
 
                   {t.alreadyBooked ? (
