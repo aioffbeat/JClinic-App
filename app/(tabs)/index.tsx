@@ -157,18 +157,22 @@ export default function Home() {
         </Card>
       )}
 
-      {accessible.length > 1 && (
-        <Card>
-          <Label>Family</Label>
-          <Body muted>{`${accessible.length} people are linked to this number.`}</Body>
-          <Button
-            title="Switch person"
-            variant="secondary"
-            onPress={() => router.push('/family')}
-            style={{ marginTop: space.md }}
-          />
-        </Card>
-      )}
+      {/* Always shown. It used to appear only when several people shared the number, which left
+          the Family screen — and with it "Give someone access" — unreachable for most patients. */}
+      <Card>
+        <Label>Family</Label>
+        <Body muted>
+          {accessible.length > 1
+            ? `${accessible.length} people are linked to this number.`
+            : 'Let a family member see your records from their own phone.'}
+        </Body>
+        <Button
+          title={accessible.length > 1 ? 'Switch person' : 'Family access'}
+          variant="secondary"
+          onPress={() => router.push('/family')}
+          style={{ marginTop: space.md }}
+        />
+      </Card>
 
       {(!!contact.data?.call || !!contact.data?.whatsapp) && (
         <Card>
